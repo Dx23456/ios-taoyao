@@ -11,7 +11,7 @@ Nothing is flashed. The loader goes into RAM through `fastboot boot`, the system
 the length of a session, and a reboot brings the phone back to its own Android. This is a research
 bench, not a ROM.
 
-The first phone is the **POCO X5 Pro 5G** (`redwood`, Snapdragon 778G). The kernel knows nothing
+The first phone is the **Xiaomi 12 Lite** (`taoyao`, Snapdragon 778G). The kernel knows nothing
 about it in advance: every address, interrupt, power rail and firmware comes from the phone's own
 device tree and its own Android, so a port to another Qualcomm phone is a new directory under
 `devices/`, not a rewrite.
