@@ -125,7 +125,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: xnu-src
-          key: xnu-src-\( {{ env.XNU_TAG }}- \){{ hashFiles('xnu/hakios.patch', 'xnu/files/**') }}
+          # hashFiles() of multiple globs inserts commas → illegal in a cache key
+          key: xnu-src-\( {{ env.XNU_TAG }}- \){{ hashFiles('xnu/hakios.patch') }}-${{ hashFiles('xnu/files/**') }}
 
       - name: Apply HakiOS Patch to Apple's XNU
         if: steps.xnu-src.outputs.cache-hit != 'true'
