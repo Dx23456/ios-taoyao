@@ -216,6 +216,10 @@ GenericARMPE::start(IOService * provider)
 		return false;
 	}
 	IOLog("GenericARMPE: platform \"%s\"\n", provider->getName());
+	provider->setProperty("IOPlatformSerialNumber", OSString::withCString("F17TRJEHG75"));
+	provider->setProperty("serial-number", OSData::withBytes("F17TRJEHG75", 12));
+	provider->setProperty("pro-motion", 1, 32);
+	provider->setProperty("display-pro-motion", 1, 32);
 
 	/*
 	 * super::start() published the /cpus children as nubs. Attach a CPU driver to each

@@ -377,6 +377,8 @@ IOMobileFramebuffer::publishModes(void)
 	timing->setObject("HorizontalAttributes", horizontal);
 	timing->setObject("VerticalAttributes", vertical);
 	timing->setObject("ColorModes", colors);
+	setNumber(timing, "RefreshRate", refreshHz());
+	setNumber(timing, "NominalFrameRate", refreshHz());
 	timings->setObject(timing);
 
 	setProperty("TimingElements", timings);
@@ -478,6 +480,11 @@ IOMobileFramebuffer::start(IOService * provider)
 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
 	/* for who draws with the GPU (userland/src/eagl.c): a frame need not be waited for before it is handed over */
 	setProperty("HakiosWaitsForGPU", kOSBooleanTrue);
+	setProperty("pro-motion", kOSBooleanTrue);
+	setProperty("display-pro-motion", kOSBooleanTrue);
+	setProperty("SupportsProMotion", kOSBooleanTrue);
+	setProperty("nominal-frame-rate", (uint64_t)refreshHz(), 32);
+	setProperty("refresh-rate", (uint64_t)refreshHz(), 32);
 	publishModes();
 	setName("disp0");
 	registerService();
