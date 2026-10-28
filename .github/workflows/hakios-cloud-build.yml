@@ -1,1 +1,119 @@
 
+name: HakiOS taoyao — safe cloud build
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_mode:
+        description: "Build target"
+        required: true
+        type: choice
+        options:
+          - qemu-open
+          - audit-only
+        default: qemu-open
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hakios-taoyao-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Source and device compatibility audit
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Record repository state
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          git rev-parse HEAD
+          git status --short
+
+          printf '\nTop-level files:\n'
+          ls -la
+
+          printf '\nDevice directories:\n'
+          find devices -mindepth 1 -maxdepth 2 -type f -print 2>/dev/null || true
+
+          printf '\nMake targets mentioning QEMU or phone:\n'
+          grep -nE '(^|[[:space:]])(qemu-open|qemu|phone)(:|[[:space:]])' Makefile || true
+
+          printf '\nBuild scripts and firmware references:\n'
+          find . -maxdepth 3 -type f \( -name '*.sh' -o -name 'Makefile' \) -print | sort
+
+      - name: Verify target is not a device flash
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          if grep -nE 'fastboot[[:space:]]+(flash|erase)|flash[[:space:]]+boot|flash[[:space:]]+vendor_boot' Makefile; then
+            echo "::error::Potential device-flashing command found in Makefile. Stopping for manual review."
+            exit 1
+          fi
+
+          echo "No obvious device-flashing command found in the top-level Makefile."
+
+  qemu-open:
+    name: Build Apple-free QEMU target
+    if: inputs.build_mode == 'qemu-open'
+    needs: audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang lld llvm make cmake ninja-build \
+            git python3 python3-pip python3-venv pkg-config \
+            qemu-system-arm qemu-efi-aarch64
+
+          clang --version
+          ld.lld --version
+          make --version
+
+      - name: Confirm target exists
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -nE '^[[:alnum:]_.-]*qemu-open[[:space:]]*:' Makefile
+
+      - name: Build Apple-free QEMU target
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p logs
+
+          set +e
+          make qemu-open 2>&1 | tee logs/qemu-open-build.log
+          result=${PIPESTATUS[0]}
+          set -e
+
+          echo "$result" > logs/exit-code.txt
+          exit "$result"
+
+      - name: Upload build logs and generated files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hakios-qemu-open-${{ github.run_id }}
+          path: |
+            logs/
+            build/
+            out/
+            qemu/
+          if-no-files-found: warn
+          retention-days: 7
