@@ -1,0 +1,115 @@
+
+name: HakiOS taoyao Artifact Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run ID of the successful build"
+        required: true
+        type: string
+      artifact_name:
+        description: "Exact artifact name from that run"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file binutils xz-utils
+
+      - name: Download successful build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT: ${{ inputs.artifact_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          mkdir -p incoming reports
+          gh run download "$RUN_ID" \
+            --repo "$REPO" \
+            --name "$ARTIFACT" \
+            --dir incoming
+          test -n "$(find incoming -type f -print -quit)"
+
+      - name: Inventory and verify files
+        run: |
+          set -euo pipefail
+          find incoming -type f -printf '%P\t%s bytes\n' \
+            | sort | tee reports/inventory.txt
+
+          find incoming -type f -print0 \
+            | sort -z \
+            | xargs -0 -r sha256sum \
+            > reports/SHA256SUMS.txt
+
+          find incoming -type f -print0 |
+          while IFS= read -r -d '' f; do
+            echo "===== $f ====="
+            file "$f" || true
+            case "$f" in
+              *.efi|*.img|*.bin|*.dtb|*.dtbo)
+                readelf -h "$f" 2>/dev/null || true
+                ;;
+            esac
+          done > reports/file-details.txt
+
+      - name: Check expected artifact categories
+        run: |
+          set -euo pipefail
+          find incoming -type f -printf '%f\n' \
+            > reports/basenames.txt
+
+          for pattern in \
+            'xnu|kernel|mach\.' \
+            'loader' \
+            'uefi|\.efi$' \
+            'apfs' \
+            'dtb|device.?tree' \
+            'soc.*args|soc\.args'
+          do
+            if grep -Eiq "$pattern" reports/basenames.txt; then
+              echo "FOUND: $pattern"
+            else
+              echo "NOT FOUND: $pattern"
+            fi
+          done | tee reports/category-check.txt
+
+          echo "Filename matches do not prove taoyao compatibility." \
+            >> reports/category-check.txt
+
+      - name: Create review archive
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          tar -czf output/hakios-taoyao-review.tar.gz \
+            incoming reports
+          sha256sum output/hakios-taoyao-review.tar.gz \
+            > output/BUNDLE-SHA256.txt
+          tar -tzf output/hakios-taoyao-review.tar.gz >/dev/null
+
+      - name: Upload review archive and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hakios-taoyao-review-${{ github.run_id }}
+          path: |
+            output/
+            reports/
+          if-no-files-found: warn
+          retention-days: 7
