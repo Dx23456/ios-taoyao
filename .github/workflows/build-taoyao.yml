@@ -49,64 +49,60 @@ jobs:
           GIT_TERMINAL_PROMPT: 0
         run: |
           mkdir -p tools
-          
-          if command -v mkbootimg &> /dev/null; then
-            echo "==> Native mkbootimg binary found in system."
-          else
-            echo "==> System mkbootimg not found, pulling from LineageOS repository..."
+          if ! command -v mkbootimg &> /dev/null; then
+            echo "==> Pulling mkbootimg from LineageOS repository..."
             rm -rf tools/mkbootimg_repo
             git clone --depth 1 https://github.com/LineageOS/android_system_tools_mkbootimg.git tools/mkbootimg_repo || true
-            
             if [ -f "tools/mkbootimg_repo/mkbootimg.py" ]; then
               cp tools/mkbootimg_repo/mkbootimg.py tools/mkbootimg.py
-            else
-              echo "Warning: Could not fetch mkbootimg.py script, will rely on system path."
             fi
           fi
 
-      - name: Inspect Workspace Structure
-        run: |
-          echo "==> Repository structure at root:"
-          ls -la
-
       - name: Build UEFI Bootloader / Kernel
         run: |
-          echo "==> Building Bootloader/Kernel..."
+          echo "==> Starting build process..."
           export CROSS_COMPILE=aarch64-linux-gnu-
           
           if [ -d "uefi" ]; then
             cd uefi && make PLATFORM=SM7325
           elif [ -f "Makefile" ]; then
             make PLATFORM=SM7325 || make
+          elif [ -f "build.sh" ]; then
+            chmod +x build.sh && ./build.sh
           else
-            echo "Error: No Makefile found in repository!"
+            echo "Error: No recognized build script (Makefile or build.sh) found in repository!"
             exit 1
           fi
+
+      - name: Diagnostics - List All Generated Files
+        run: |
+          echo "==> Listing files after build step:"
+          find . -not -path '*/.*' -type f | sort
 
       - name: Package Boot Image (boot.img)
         run: |
           mkdir -p out
           
-          BOOT_BIN=$(find . -maxdepth 3 \( -name "*.elf" -o -name "Image" -o -name "mach_kernel" \) | head -n 1)
+          # 全局搜索常见的内核/UEFI 编译产物
+          BOOT_BIN=$(find . -not -path '*/.*' -type f \( -name "*.elf" -o -name "*.fd" -o -name "*.bin" -o -name "Image" -o -name "mach_kernel" \) | head -n 1)
           
           if [ -z "$BOOT_BIN" ]; then
-            echo "Error: No compiled kernel binary (.elf / Image / mach_kernel) was found after build!"
+            echo "Error: Could not automatically detect built binary."
+            echo "Please check the 'Diagnostics - List All Generated Files' step above."
             exit 1
           fi
           
-          echo "==> Found boot binary: $BOOT_BIN"
+          echo "==> Detected target boot binary: $BOOT_BIN"
           
-          # 确定 mkbootimg 可执行命令
+          # 确定 mkbootimg 命令
           if command -v mkbootimg &> /dev/null; then
             MKBOOT="mkbootimg"
           elif [ -f "tools/mkbootimg.py" ]; then
             MKBOOT="python3 tools/mkbootimg.py"
           else
-            echo "Error: Neither system mkbootimg nor tools/mkbootimg.py is available!"
+            echo "Error: mkbootimg tool not found!"
             exit 1
           fi
-          
-          echo "==> Packaging using: $MKBOOT"
           
           $MKBOOT \
             --kernel "$BOOT_BIN" \
@@ -116,7 +112,7 @@ jobs:
             -o out/boot-hackios-taoyao.img
 
           if [ ! -f "out/boot-hackios-taoyao.img" ]; then
-            echo "Error: boot-hackios-taoyao.img generation failed!"
+            echo "Error: Packaging failed, out/boot-hackios-taoyao.img was not produced!"
             exit 1
           fi
           
