@@ -78,7 +78,7 @@ enum {
 
 #define kFBNotifyVSync          5
 #define kFBNotifyTypes          8
-#define kFBRefreshHz            60                      /* unless boot-arg fb_hz says otherwise */
+#define kFBRefreshHz            120                      /* unless boot-arg fb_hz says otherwise */
 
 #define FRAME_TIMES             64                      /* milliseconds told apart between two frames */
 #define FRAME_PAUSE             90                      /* from so many on, nothing was moving: not a slow frame */
@@ -347,6 +347,7 @@ IOMobileFramebuffer::publishModes(void)
 	OSArray * timings = OSArray::withCapacity(1);
 	OSArray * colors = OSArray::withCapacity(1);
 	const uint32_t rate = refreshHz() << 16;                /* 16.16 fixed point */
+	IOLog("MiniIOMobileFramebuffer: display mode: %ux%u at %u Hz (rate %#x)\n", fWidth, fHeight, refreshHz(), rate);
 
 	if (timing == NULL || horizontal == NULL || vertical == NULL || color == NULL || timings == NULL || colors == NULL) {
 		return;

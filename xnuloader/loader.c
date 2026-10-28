@@ -3055,8 +3055,8 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	dt_identity(&w, identity_root, sizeof(identity_root) / sizeof(identity_root[0]), identity_root_data);
 	dt_prop_str(&w, "platform-name", "t8015");
 	/* what iBoot takes from the factory configuration of a real phone; fixed size fields */
-	dt_prop_padded(&w, "serial-number", "RDW00POCOX5P", 32);
-	dt_prop_padded(&w, "mlb-serial-number", "RDW00POCOX5PMLB00", 32);
+	dt_prop_padded(&w, "serial-number", "F17TRJEHG75", 32);
+	dt_prop_padded(&w, "mlb-serial-number", "F17TRJEHG75MLB00", 32);
 	dt_prop_padded(&w, "model-number", "MQAC2", 32);
 	dt_prop_padded(&w, "region-info", "LL/A", 32);
 	dt_prop_padded(&w, "regulatory-model-number", "A1865", 32);
