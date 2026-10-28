@@ -34,7 +34,7 @@ on:
       - main
 
 concurrency:
-  group: \( {{ github.workflow }}- \){{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -108,7 +108,7 @@ jobs:
           curl -fsSL "https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-x86_64.tar.xz" \
             | tar -xJ -C "$THEOS/toolchain/"
 
-          echo "==> Fetching iPhoneOS16.5.sdk (sparse, \~220 MB)..."
+          echo "==> Fetching iPhoneOS16.5.sdk (sparse, ~220 MB)..."
           git clone -q --depth 1 --filter=blob:none --sparse \
             https://github.com/theos/sdks.git "$THEOS/sdks-git"
           git -C "$THEOS/sdks-git" sparse-checkout set iPhoneOS16.5.sdk
@@ -126,7 +126,7 @@ jobs:
         with:
           path: xnu-src
           # hashFiles() of multiple globs inserts commas → illegal in a cache key
-          key: xnu-src-\( {{ env.XNU_TAG }}- \){{ hashFiles('xnu/hakios.patch') }}-${{ hashFiles('xnu/files/**') }}
+          key: xnu-src-${{ env.XNU_TAG }}-${{ hashFiles('xnu/hakios.patch') }}-${{ hashFiles('xnu/files/**') }}
 
       - name: Apply HakiOS Patch to Apple's XNU
         if: steps.xnu-src.outputs.cache-hit != 'true'
@@ -188,6 +188,6 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hakios-xnu-\( {{ env.XNU_TAG }}- \){{ github.sha }}
+          name: hakios-xnu-${{ env.XNU_TAG }}-${{ github.sha }}
           path: out/
           retention-days: 14
