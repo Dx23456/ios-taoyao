@@ -50,7 +50,7 @@ jobs:
 
       - name: Setup Build Environment & Toolchains
         run: |
-          sudo apt-update
+          sudo apt update
           sudo apt-get install -y --no-install-recommends \
             build-essential clang lld llvm ccache \
             python3 python3-pip python3-setuptools \
