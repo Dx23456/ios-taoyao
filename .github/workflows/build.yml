@@ -1,0 +1,51 @@
+name: Build XNU Kernel
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    # Note: Building Apple XNU generally requires macOS. Change to ubuntu-latest 
+    # only if you are cross-compiling with a Linux toolchain.
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive  # Fetches nested submodules if xnu-src is a submodule
+
+      - name: Ensure XNU Source Directory Exists
+        run: |
+          mkdir -p xnu-src
+          
+          # Download source tarball if target folder does not exist
+          if [ ! -d "xnu-src/xnu-8796.121.2" ]; then
+            echo "Downloading XNU 8796.121.2 source archive..."
+            curl -LO https://github.com/apple-oss-distributions/xnu/archive/refs/tags/xnu-8796.121.2.tar.gz
+            
+            echo "Extracting source archive..."
+            tar -xzf xnu-8796.121.2.tar.gz -C xnu-src/
+            rm xnu-8796.121.2.tar.gz
+            
+            # Normalize folder name if GitHub appended an extra prefix
+            if [ -d "xnu-src/xnu-xnu-8796.121.2" ]; then
+              mv xnu-src/xnu-xnu-8796.121.2 xnu-src/xnu-8796.121.2
+            fi
+          fi
+
+      - name: Debug Directory Tree
+        run: |
+          echo "=== Root Directory ==="
+          ls -la
+          echo "=== xnu-src Directory ==="
+          ls -la xnu-src/
+
+      - name: Execute XNU Build
+        run: |
+          chmod +x xnu-build.sh
+          JOBS_CNT=4 ./xnu-build.sh
