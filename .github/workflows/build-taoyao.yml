@@ -69,15 +69,13 @@ jobs:
 
       - name: Install Build Dependencies
         run: |
-          # what xnu-deps/setup.sh needs on the machine: git curl tar xz make cc clang
-          # clang++ flex bison m4 perl python3 autoreconf automake (+ libxml2 for cctools)
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential clang lld llvm \
             flex bison m4 perl python3 \
             git curl tar xz-utils ca-certificates \
             autoconf automake libtool libxml2 \
-            libtinfo6
+            libtinfo6 uuid-dev
 
       # ------------------------------------------------------------------
       # Theos provides what the XNU build links with: the cctools (ld64,
@@ -132,24 +130,54 @@ jobs:
         if: steps.xnu-src.outputs.cache-hit != 'true'
         run: xnu/apply.sh
 
-      - name: Build XNU Kernel
+      # Critical: a previous failed run can leave a partial BUILD/ inside the
+      # cache. Always start header export from a clean tree.
+      - name: Clean previous XNU build products
         run: |
-          echo "==> Building host tools, SDK additions and kext libs..."
-          xnu-deps/setup.sh
+          rm -rf xnu-src/xnu-8796.121.2/BUILD
+          rm -rf xnu-deps/exporthdrs.log xnu-deps/mig-build.log xnu-deps/tcsh-build.log
+
+      - name: Build XNU Kernel
+        id: build-xnu
+        run: |
+          set -euo pipefail
+          . ./xnu-env.sh          # make sure THEOS / PATH / XNU_SRC are correct
+
+          echo "==> Stage 1: host tools + SDK overlay"
+          xnu-deps/setup.sh --stage1
+
+          echo "==> Stage 2: export headers + build the two kext libraries"
+          # Run stage2 explicitly so the die() message and log are clear
+          xnu-deps/setup.sh --stage2
+
           echo "==> Building the kernel..."
+          # -k is required by upstream (check_all_exports always fails after link)
           ./xnu-build.sh -j"$(nproc)" -k
+
           test -f "$KERNEL_BIN"
           ls -la "$KERNEL_BIN"
 
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xnu-build-logs-${{ github.sha }}
+          path: |
+            xnu-deps/exporthdrs.log
+            xnu-deps/mig-build.log
+            xnu-deps/tcsh-build.log
+            xnu-src/xnu-8796.121.2/BUILD/
+          retention-days: 7
+          if-no-files-found: ignore
+
       # ------------------------------------------------------------------
       # Loader: a freestanding AArch64 UEFI application (no EDK2).
-      # identity.h comes from the iOS 16.5 IPSW device tree (34 KB HTTP-range
-      # download from Apple's CDN); the LZFSE decoder self-builds if needed.
       # ------------------------------------------------------------------
       - name: Build xnuloader
         env:
           IDENTITY: ${{ inputs.identity || 'stock' }}
         run: |
+          set -euo pipefail
           if [ "$IDENTITY" = "placeholder" ]; then
             PLACEHOLDER=1 xnuloader/mkidentity.sh
           else
@@ -161,6 +189,7 @@ jobs:
 
       - name: Build hello (Apple-free User Space Smoke Binary)
         run: |
+          set -euo pipefail
           . ./xnu-env.sh
           xnu-clang -arch arm64 -Os -static -nostdlib -ffreestanding \
             -fno-stack-protector -fno-builtin \
