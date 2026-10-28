@@ -42,20 +42,20 @@ jobs:
             bubblewrap socat ripgrep liblzfse-dev \
             libssl-dev libffi-dev libxml2-dev zlib1g-dev \
             fastboot android-sdk-platform-tools flex bison \
-            device-tree-compiler cpio libelf-dev mkbootimg
+            device-tree-compiler cpio libelf-dev
 
-      - name: Setup Packaging Tools
+      - name: Setup Standalone Packaging Tools
         env:
           GIT_TERMINAL_PROMPT: 0
         run: |
           mkdir -p tools
-          if ! command -v mkbootimg &> /dev/null; then
-            echo "==> Pulling mkbootimg from LineageOS repository..."
-            rm -rf tools/mkbootimg_repo
-            git clone --depth 1 https://github.com/LineageOS/android_system_tools_mkbootimg.git tools/mkbootimg_repo || true
-            if [ -f "tools/mkbootimg_repo/mkbootimg.py" ]; then
-              cp tools/mkbootimg_repo/mkbootimg.py tools/mkbootimg.py
-            fi
+          echo "==> Fetching full mkbootimg repository from LineageOS..."
+          rm -rf tools/mkbootimg_repo
+          git clone --depth 1 https://github.com/LineageOS/android_system_tools_mkbootimg.git tools/mkbootimg_repo
+          
+          if [ ! -f "tools/mkbootimg_repo/mkbootimg.py" ]; then
+            echo "Error: Failed to fetch standalone mkbootimg.py"
+            exit 1
           fi
 
       - name: Build UEFI Bootloader / Kernel
@@ -70,41 +70,31 @@ jobs:
           elif [ -f "build.sh" ]; then
             chmod +x build.sh && ./build.sh
           else
-            echo "Error: No recognized build script (Makefile or build.sh) found in repository!"
+            echo "Error: No recognized build script found!"
             exit 1
           fi
-
-      - name: Diagnostics - List All Generated Files
-        run: |
-          echo "==> Listing files after build step:"
-          find . -not -path '*/.*' -type f | sort
 
       - name: Package Boot Image (boot.img)
         run: |
           mkdir -p out
           
-          # 全局搜索常见的内核/UEFI 编译产物
-          BOOT_BIN=$(find . -not -path '*/.*' -type f \( -name "*.elf" -o -name "*.fd" -o -name "*.bin" -o -name "Image" -o -name "mach_kernel" \) | head -n 1)
+          # 1. 优先搜索包含 taoyao 的二进制文件
+          BOOT_BIN=$(find . -not -path '*/.*' -type f \( -name "*.elf" -o -name "*.fd" -o -name "*.bin" -o -name "Image" -o -name "mach_kernel" \) | grep -i "taoyao" | head -n 1)
+          
+          # 2. 若未搜索到，排除 poco 等其他无关设备后再次搜索
+          if [ -z "$BOOT_BIN" ]; then
+            BOOT_BIN=$(find . -not -path '*/.*' -not -path '*/poco*' -not -path '*/tools/*' -type f \( -name "*.elf" -o -name "*.fd" -o -name "*.bin" -o -name "Image" -o -name "mach_kernel" \) | head -n 1)
+          fi
           
           if [ -z "$BOOT_BIN" ]; then
-            echo "Error: Could not automatically detect built binary."
-            echo "Please check the 'Diagnostics - List All Generated Files' step above."
+            echo "Error: Could not locate a valid binary for taoyao!"
             exit 1
           fi
           
-          echo "==> Detected target boot binary: $BOOT_BIN"
+          echo "==> Selected boot binary: $BOOT_BIN"
           
-          # 确定 mkbootimg 命令
-          if command -v mkbootimg &> /dev/null; then
-            MKBOOT="mkbootimg"
-          elif [ -f "tools/mkbootimg.py" ]; then
-            MKBOOT="python3 tools/mkbootimg.py"
-          else
-            echo "Error: mkbootimg tool not found!"
-            exit 1
-          fi
-          
-          $MKBOOT \
+          # 直接使用独立的 LineageOS Python 脚本进行打包（自带完整 gki 依赖）
+          python3 tools/mkbootimg_repo/mkbootimg.py \
             --kernel "$BOOT_BIN" \
             --cmdline "console=ttyMSM0,115200n8 loglevel=7 earlycon=msm_geni_serial,0x00880000 androidboot.hardware=qcom" \
             --base 0x00000000 \
@@ -112,7 +102,7 @@ jobs:
             -o out/boot-hackios-taoyao.img
 
           if [ ! -f "out/boot-hackios-taoyao.img" ]; then
-            echo "Error: Packaging failed, out/boot-hackios-taoyao.img was not produced!"
+            echo "Error: Packaging failed, out/boot-hackios-taoyao.img was not generated!"
             exit 1
           fi
           
