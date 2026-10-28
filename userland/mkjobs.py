@@ -297,6 +297,10 @@ if rest:
         for key in ('RunAtLoad', 'KeepAlive', 'StartInterval', 'StartCalendarInterval', 'WatchPaths',
                     'QueueDirectories', 'StartOnMount', 'LaunchEvents'):
             job.pop(key, None)
+        if isinstance(job.get('MachServices'), dict):
+            for svc, val in list(job['MachServices'].items()):
+                if isinstance(val, dict):
+                    job['MachServices'][svc] = True
         job['StandardErrorPath'] = '/dev/console'
         if label in oslog:
             job.setdefault('EnvironmentVariables', {})['OS_ACTIVITY_DT_MODE'] = 'YES'
