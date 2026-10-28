@@ -1,12 +1,26 @@
-name: Build HackiOS (XNU + UEFI) for Xiaomi 12 Lite (taoyao)
+name: Build HakiOS (XNU + xnuloader)
+
+# Based on the actual build system of github.com/Dx23456/ios-taoyao:
+#   xnu/apply.sh        Apple's xnu-8796.121.2 (iOS 16.5) + hakios.patch -> xnu-src/
+#   xnu-deps/setup.sh   host tools (mig, tcsh, unifdef...), the SDK, the two kext libs
+#   ./xnu-build.sh      the kernel -> .../DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+#   xnuloader/          the UEFI boot loader (clang + lld-link, no EDK2) -> loader.efi
+#
+# The repo is pinned to iOS 16.5 (XNU 8796.121.2, iPhoneOS16.5.sdk), so there is
+# no ios_version input. userland/ images need the full 7.4 GB IPSW and the phone
+# firmware needs a physical device: both are out of scope for CI.
 
 on:
   workflow_dispatch:
     inputs:
-      ios_version:
-        description: 'iOS Target Version'
+      identity:
+        description: 'xnuloader identity.h source'
         required: true
-        default: '16.5'
+        type: choice
+        default: stock
+        options:
+          - stock       # from the iOS 16.5 IPSW device tree (34 KB, Apple's public CDN)
+          - placeholder # Apple-free identity; builds/boots, but not for the iOS user space
   push:
     branches:
       - main
@@ -14,157 +28,143 @@ on:
     paths-ignore:
       - '**.md'
       - 'LICENSE'
+      - 'docs/**'
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  THEOS: ${{ github.workspace }}/theos
+  XNU_TAG: xnu-8796.121.2
+  KERNEL_BIN: xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
 
 jobs:
-  build-taoyao:
+  build:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
 
     steps:
-      - name: Checkout Repository with Submodules
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Maximize Runner Disk Space
         run: |
           echo "==> Clearing unnecessary runner packages..."
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/local/share/chromium /usr/local/doc/cmake
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc             /usr/local/share/powershell /usr/local/share/chromium /usr/local/doc/cmake             "$AGENT_TOOLSDIRECTORY" 2>/dev/null || true
           sudo apt-get clean
+          df -h /
 
-      - name: Install Toolchains & Build Dependencies
+      - name: Install Build Dependencies
         run: |
+          # what xnu-deps/setup.sh needs on the machine: git curl tar xz make cc clang
+          # clang++ flex bison m4 perl python3 autoreconf automake (+ libxml2 for cctools)
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential clang lld llvm ccache \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            python3 python3-pip python3-setuptools \
-            bubblewrap socat ripgrep liblzfse-dev \
-            libssl-dev libffi-dev libxml2-dev zlib1g-dev \
-            fastboot android-sdk-platform-tools flex bison \
-            device-tree-compiler cpio libelf-dev uuid-dev
+          sudo apt-get install -y --no-install-recommends             build-essential clang lld llvm             flex bison m4 perl python3             git curl tar xz-utils ca-certificates             autoconf automake libtool libxml2             libtinfo6
 
-      - name: Setup Standalone Packaging Tools
+      # ------------------------------------------------------------------
+      # Theos provides what the XNU build links with: the cctools (ld64,
+      # libtool, otool, ...) and the iPhoneOS 16.5 SDK.
+      # ------------------------------------------------------------------
+      - name: Cache Theos Toolchain + SDK
+        id: theos
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.THEOS }}
+          key: theos-linux-x86_64-v1
+
+      - name: Install Theos (Linux cctools + iPhoneOS 16.5 SDK)
+        if: steps.theos.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          mkdir -p "$THEOS/toolchain" "$THEOS/sdks"
+
+          echo "==> Cloning theos..."
+          git clone -q --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+
+          echo "==> Fetching the Linux iOS toolchain (cctools/ld64)..."
+          curl -fsSL "https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-x86_64.tar.xz"             | tar -xJ -C "$THEOS/toolchain/"
+
+          echo "==> Fetching iPhoneOS16.5.sdk (sparse, ~220 MB)..."
+          git clone -q --depth 1 --filter=blob:none --sparse             https://github.com/theos/sdks.git "$THEOS/sdks-git"
+          git -C "$THEOS/sdks-git" sparse-checkout set iPhoneOS16.5.sdk
+          ln -sfn "$THEOS/sdks-git/iPhoneOS16.5.sdk" "$THEOS/sdks/iPhoneOS16.5.sdk"
+
+          test -x "$THEOS/toolchain/linux/iphone/bin/ld"
+          test -d "$THEOS/sdks/iPhoneOS16.5.sdk/usr/include"
+
+      # ------------------------------------------------------------------
+      # Kernel: apply the patch to Apple's sources once, cache the tree.
+      # ------------------------------------------------------------------
+      - name: Restore Patched XNU Tree
+        id: xnu-src
+        uses: actions/cache@v4
+        with:
+          path: xnu-src
+          key: xnu-src-${{ env.XNU_TAG }}-${{ hashFiles('xnu/hakios.patch', 'xnu/files/**') }}
+
+      - name: Apply HakiOS Patch to Apple's XNU
+        if: steps.xnu-src.outputs.cache-hit != 'true'
+        run: xnu/apply.sh
+
+      - name: Build XNU Kernel
+        run: |
+          echo "==> Building host tools, SDK additions and kext libs..."
+          xnu-deps/setup.sh
+          echo "==> Building the kernel..."
+          ./xnu-build.sh -j"$(nproc)" -k
+          test -f "$KERNEL_BIN"
+          ls -la "$KERNEL_BIN"
+
+      # ------------------------------------------------------------------
+      # Loader: a freestanding AArch64 UEFI application (no EDK2).
+      # identity.h comes from the iOS 16.5 IPSW device tree (34 KB HTTP-range
+      # download from Apple's CDN); the LZFSE decoder self-builds if needed.
+      # ------------------------------------------------------------------
+      - name: Build xnuloader
         env:
-          GIT_TERMINAL_PROMPT: 0
+          IDENTITY: ${{ inputs.identity || 'stock' }}
         run: |
-          mkdir -p tools
-          echo "==> Fetching standalone LineageOS mkbootimg tool..."
-          rm -rf tools/mkbootimg_repo
-          git clone --depth 1 https://github.com/LineageOS/android_system_tools_mkbootimg.git tools/mkbootimg_repo
-
-      - name: Compile XNU Kernel & Sync Binaries
-        run: |
-          echo "==> Step 1: Building/Preparing XNU Kernel (mach_kernel)..."
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export ARCH=arm64
-          
-          if [ -d "xnu" ]; then
-            cd xnu
-            make ARCH=arm64 TARGET=SM7325 || make ARCH=arm64 || true
-            cd ..
-          elif [ -f "scripts/build_xnu.sh" ]; then
-            chmod +x scripts/build_xnu.sh && ./scripts/build_xnu.sh || true
-          fi
-
-          # 查找 mach_kernel 并同步到 prebuilt 供 EDK2 FDF 嵌入
-          XNU_BIN=$(find . -not -path '*/.*' \( -name "mach_kernel" -o -name "mach" \) | head -n 1)
-          if [ -n "$XNU_BIN" ]; then
-            echo "==> Found XNU Kernel at: $XNU_BIN"
-            mkdir -p prebuilt uefi/prebuilt
-            cp "$XNU_BIN" prebuilt/mach_kernel 2>/dev/null || true
-            cp "$XNU_BIN" uefi/prebuilt/mach_kernel 2>/dev/null || true
-          fi
-
-      - name: Build EDK2 UEFI Payload
-        run: |
-          echo "==> Step 2: Building UEFI Bootloader Payload for Xiaomi 12 Lite (taoyao)..."
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          
-          if [ -f "build.sh" ]; then
-            chmod +x build.sh && ./build.sh --device taoyao --platform SM7325
-          elif [ -f "Makefile" ]; then
-            make PLATFORM=SM7325 DEVICE=taoyao || make PLATFORM=SM7325 || make
-          elif [ -d "uefi" ]; then
-            cd uefi
-            if [ -f "build.sh" ]; then
-              chmod +x build.sh && ./build.sh --device taoyao
-            elif [ -f "Makefile" ]; then
-              make PLATFORM=SM7325 || make
-            fi
-            cd ..
+          if [ "$IDENTITY" = "placeholder" ]; then
+            PLACEHOLDER=1 xnuloader/mkidentity.sh
           else
-            echo "Error: No valid build entrypoint found!"
-            exit 1
+            xnuloader/mkidentity.sh
           fi
+          xnuloader/build.sh
+          test -f xnuloader/loader.efi
+          ls -la xnuloader/loader.efi
 
-      - name: Payload & XNU Inclusion Inspection
+      - name: Build hello (Apple-free User Space Smoke Binary)
         run: |
-          echo "==> Step 3: Inspecting built target binary..."
-          
-          # 排除 prebuilt 目录和 BootShim.bin 垫片文件
-          BOOT_BIN=$(find . -not -path '*/.*' -not -path '*/prebuilt/*' -not -name "BootShim.bin" -type f \( -name "*.elf" -o -name "*.fd" -o -name "Image" -o -name "mach_kernel" \) | grep -i "taoyao" | head -n 1)
-          
-          if [ -z "$BOOT_BIN" ]; then
-            BOOT_BIN=$(find . -not -path '*/.*' -not -path '*/prebuilt/*' -not -name "BootShim.bin" -not -path '*/poco*' -not -path '*/tools*' -type f \( -name "*.elf" -o -name "*.fd" -o -name "*.bin" -o -name "Image" -o -name "mach_kernel" \) | head -n 1)
-          fi
-          
-          if [ -z "$BOOT_BIN" ]; then
-            echo "Error: Could not automatically detect built UEFI binary (.elf / .fd)."
-            echo "==> Printing files generated/modified during build for debugging:"
-            find . -not -path '*/.*' -not -path '*/prebuilt/*' -type f | sort | head -n 100
-            exit 1
-          fi
-          
-          BIN_SIZE=$(stat -c%s "$BOOT_BIN")
-          echo "==> Detected payload binary: $BOOT_BIN"
-          echo "==> Payload size: $BIN_SIZE bytes (~$((BIN_SIZE / 1024 / 1024)) MB)"
-          
-          if [ "$BIN_SIZE" -lt 8388608 ]; then
-            echo "----------------------------------------------------------------------"
-            echo "::warning:: Target binary is smaller than 8MB ($BIN_SIZE bytes)."
-            echo "This indicates XNU (mach_kernel) was likely NOT embedded into UEFI."
-            echo "----------------------------------------------------------------------"
-          fi
+          . ./xnu-env.sh
+          xnu-clang -arch arm64 -Os -static -nostdlib -ffreestanding             -fno-stack-protector -fno-builtin             -Wl,-e,_start -Wl,-pagezero_size,0x100000000             -o userland/hello userland/src/hello.c
+          file userland/hello || true
 
-      - name: Package Final Boot Image (boot-hackios-taoyao.img)
+      - name: Package Artifacts
         run: |
           mkdir -p out
-          
-          BOOT_BIN=$(find . -not -path '*/.*' -not -path '*/prebuilt/*' -not -name "BootShim.bin" -type f \( -name "*.elf" -o -name "*.fd" -o -name "Image" -o -name "mach_kernel" \) | grep -i "taoyao" | head -n 1)
-          if [ -z "$BOOT_BIN" ]; then
-            BOOT_BIN=$(find . -not -path '*/.*' -not -path '*/prebuilt/*' -not -name "BootShim.bin" -not -path '*/poco*' -not -path '*/tools*' -type f \( -name "*.elf" -o -name "*.fd" -o -name "*.bin" -o -name "Image" -o -name "mach_kernel" \) | head -n 1)
-          fi
-          
-          DTB_ARG=""
-          DTB_FILE=$(find . -not -path '*/.*' \( -name "*taoyao*.dtb" -o -name "*sm7325*.dtb" \) | head -n 1)
-          if [ -n "$DTB_FILE" ]; then
-            DTB_ARG="--dtb $DTB_FILE"
-            echo "==> Including Device Tree DTB: $DTB_FILE"
-          fi
-          
-          echo "==> Packaging boot image via LineageOS mkbootimg..."
-          python3 tools/mkbootimg_repo/mkbootimg.py \
-            --kernel "$BOOT_BIN" \
-            $DTB_ARG \
-            --cmdline " -v console=ttyMSM0,115200n8 loglevel=7 earlycon=msm_geni_serial,0x00880000 androidboot.hardware=qcom" \
-            --base 0x00000000 \
-            --pagesize 4096 \
-            -o out/boot-hackios-taoyao.img
-
-          if [ ! -f "out/boot-hackios-taoyao.img" ]; then
-            echo "Error: Packaging failed, out/boot-hackios-taoyao.img not found!"
-            exit 1
-          fi
-          
-          IMG_SIZE=$(stat -c%s "out/boot-hackios-taoyao.img")
-          echo "==> SUCCESS! Final boot image size: ${IMG_SIZE} bytes (~$((IMG_SIZE / 1024 / 1024)) MB)."
-          
-          cd out && sha256sum boot-hackios-taoyao.img > checksums.txt
+          cp "$KERNEL_BIN" out/mach.development.bcm2837
+          cp xnuloader/loader.efi out/
+          cp userland/hello out/
+          {
+            echo "HakiOS CI build"
+            echo "repo: ${{ github.repository }}"
+            echo "commit: ${{ github.sha }}"
+            echo "identity: ${{ inputs.identity || 'stock' }}"
+            echo "built: $(date -u '+%Y-%m-%d %H:%M UTC')"
+          } > out/BUILD-INFO.txt
+          cd out
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: HackiOS-BootImage-Xiaomi12Lite-taoyao
+          name: hakios-xnu-${{ env.XNU_TAG }}-${{ github.sha }}
           path: out/
           retention-days: 14
