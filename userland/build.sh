@@ -107,6 +107,7 @@ IOS_JOBS=${JOBS-"
 	com.apple.powerd com.apple.analyticsd com.apple.logd_helper
 	com.apple.iconservices.iconservicesagent com.apple.pluginkit.pkd
 	com.apple.mediaserverd
+	com.apple.bluetoothd
 	com.apple.SpringBoard
 "}
 # iOS's own Wi-Fi daemon, for Settings to have a Wi-Fi to show: the kernel answers it in

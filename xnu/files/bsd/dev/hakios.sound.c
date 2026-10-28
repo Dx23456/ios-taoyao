@@ -570,9 +570,21 @@ space_find(void)
 		if (smr >> 31) {
 			used[s2cr & 0xff] = true;
 			if (((stream ^ AUDIO_STREAM) & ~mask) == 0) {
-				say("sound: match register %u covers the audio stream already: stream %#x mask %#x, s2cr %#x (accepted)\n", n,
-				    stream, mask, s2cr);
-				space.passed = true;
+				if ((s2cr >> 16 & 3) == 1) {
+					say("sound: match register %u covers the audio stream already: stream %#x mask %#x, s2cr %#x (bypass accepted)\n", n,
+					    stream, mask, s2cr);
+					space.passed = true;
+					return true;
+				}
+				say("sound: match register %u already has stream %#x with context %u, taking over\n", n, stream, s2cr & 0xff);
+				space.match = n;
+				space.old_smr = 0;
+				space.old_s2cr = 0x200ff;
+				space.context = s2cr & 0xff;
+				apps_smmu_second.phys = apps_smmu.phys + space.page;
+				apps_smmu_context.phys = apps_smmu.phys + (space.pages + space.context) * space.page;
+				space.old_sctlr = 0;
+				space.found = true;
 				return true;
 			}
 		} else if (space.match == ~0u) {
@@ -712,8 +724,8 @@ static bool
 shared_get(unsigned user)
 {
 	if (space_users == 0) {
-		if (buffer == 0 && kmem_alloc(kernel_map, &buffer, SHARED_BYTES, KMA_KOBJECT | KMA_ZERO | KMA_DATA,
-		    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+		if (buffer == 0 && kmem_alloc_contig(kernel_map, &buffer, SHARED_BYTES, PAGE_MASK, 0, 0,
+		    KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
 			buffer = 0;
 			say("sound: no memory for the DSP's buffers\n");
 			return false;
@@ -1423,7 +1435,9 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 		if (!hakios_speaker_prepare(acf, acf_size)) {
 			goto out;
 		}
-		hakios_adsp_fw_free(acf, acf_size);
+		if (!is_image_file) {
+			hakios_adsp_fw_free(acf, acf_size);
+		}
 		acf = NULL;
 		feeder_runs = true;
 		if (kernel_thread_start(feeder_thread, NULL, &feeder) != KERN_SUCCESS) {

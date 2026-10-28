@@ -963,6 +963,21 @@ mount_writable(void)
 		    users ? ", users resolvable" : "");
 		check(grafted, "graft the package manager's prefix onto the data volume");
 	}
+
+	/*
+	 * Our audio device and haptic actuator plug-in for CoreAudio HAL (mediaserverd): HakiosAudio.driver.
+	 * Mediaserverd looks in both /Library/Audio/Plug-Ins/HAL and /System/Library/Audio/Plug-Ins/HAL.
+	 */
+	if (stat(in_image("/hal"), &st) == 0) {
+		int u_ok = mount("bindfs", "/Library/Audio/Plug-Ins/HAL", MNT_RDONLY | MNT_UNION, (void *)in_image("/hal")) == 0;
+		if (!u_ok) {
+			printf("  bindfs /hal on /Library/Audio/Plug-Ins/HAL, union: %s\n", strerror(errno));
+		}
+		check(u_ok, "HakiosAudio HAL plugin in /Library/Audio/Plug-Ins/HAL");
+		if (synthetic_dir("/System/Library/Audio/Plug-Ins") && synthetic_dir("/System/Library/Audio/Plug-Ins/HAL")) {
+			bind_dir(in_image("/hal"), "/System/Library/Audio/Plug-Ins/HAL");
+		}
+	}
 }
 
 /*

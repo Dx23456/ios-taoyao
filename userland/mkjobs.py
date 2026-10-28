@@ -213,12 +213,12 @@ import sys
 # for ever, see «Sileo» in README.md.)
 # (mediaserverd is not among them, for all that there is neither sound nor a camera:
 # it is where VideoToolbox decodes for every other process, a HEIC picture included; see src/inject_media.c.)
-DENY = ('watchdog', 'CommCenter', 'wifi', 'WiFi', 'bluetooth', 'BTServer', 'locationd', 'softwareupdate',
+DENY = ('watchdog', 'CommCenter', 'wifi', 'WiFi', 'locationd', 'softwareupdate',
         'datamigrator', 'backupd', 'thermalmonitord', 'keybagd', 'nfcd', 'biometrickitd', 'pearld',
         'obliterat', 'storage_mounter', 'com.apple.fud', 'sepd', 'seputil', 'camera', 'ReportCrash',
         'osanalytics', 'lockdown', 'audio', 'jetsamproperties',
         'purplebuddy', 'restore', 'usb', 'accessoryd',
-        'mobileassetd', 'bird',
+        'mobileassetd', 'bird', 'CarPlay',
         # these start, crash and are asked for again, over and over. (aggregated, which was among them, is where
         # iOS 16 keeps its power log -- com.apple.powerlog.plxpclogger.xpc and the rest -- that Settings > Battery
         # waits for; it now runs through a session.)
@@ -271,6 +271,8 @@ for label in labels:
     # a job that is named is wanted, whatever hardware it says it is for: wifid's asks for a node "wlan" in the
     # device tree, which the loader's tree does not have yet
     job.pop('_LimitLoadToDeviceTree', None)
+    if label == 'com.apple.bluetoothd':
+        job.setdefault('EnvironmentVariables', {})['BT_DEVICE_ADDRESS'] = '02:52:44:57:00:02'
     if 'all' in oslog or label in oslog:
         job.setdefault('EnvironmentVariables', {})['OS_ACTIVITY_DT_MODE'] = 'YES'
     with open(f'{dest}/{label}.plist', 'wb') as f:
