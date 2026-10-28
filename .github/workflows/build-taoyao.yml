@@ -7,10 +7,6 @@ on:
         description: 'iOS Target Version'
         required: true
         default: '16.5'
-      clean_cache:
-        description: 'Clear Build Cache (true/false)'
-        required: false
-        default: 'false'
   push:
     branches:
       - main
@@ -20,138 +16,92 @@ on:
       - 'LICENSE'
 
 jobs:
-  free-disk-space:
+  build-taoyao:
     runs-on: ubuntu-latest
-    steps:
-      - name: Maximize Runner Disk Space
-        run: |
-          echo "==> Clearing unnecessary pre-installed toolchains to free disk space..."
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/local/share/chromium
-          sudo rm -rf /usr/local/doc/cmake
-          sudo apt-get remove -y '^dotnet-.*' '^ghc-.*' '^php.*' '^openjdk-.*' google-chrome-stable || true
-          sudo apt-get autoremove -y
-          sudo apt-get clean
-          df -h
 
-  build-hackios:
-    needs: free-disk-space
-    runs-on: ubuntu-latest
-    
     steps:
-      - name: Checkout HackiOS Core Repository
+      - name: Checkout Current Repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 1
+
+      - name: Maximize Runner Disk Space
+        run: |
+          echo "==> Clearing unnecessary pre-installed toolchains..."
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/local/share/chromium /usr/local/doc/cmake
+          sudo apt-get clean
 
       - name: Setup Build Environment & Toolchains
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential clang lld llvm ccache \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             python3 python3-pip python3-setuptools \
             bubblewrap socat ripgrep liblzfse-dev \
             libssl-dev libffi-dev libxml2-dev zlib1g-dev \
             fastboot android-sdk-platform-tools flex bison \
-            device-tree-compiler cpio libelf-dev
-          
-          # Verify installed tools
-          clang --version
-          python3 --version
-          bwrap --version
+            device-tree-compiler cpio libelf-dev wget
 
-      - name: Setup CCache
-        uses: actions/cache@v4
-        if: ${{ github.event.inputs.clean_cache != 'true' }}
-        with:
-          path: ~/.ccache
-          key: ccache-${{ runner.os }}-taoyao-${{ github.sha }}
-          restore-keys: |
-            ccache-${{ runner.os }}-taoyao-
-
-      - name: Checkout Device Tree & Firmware for Taoyao
+      - name: Setup Packaging Tools
         run: |
-          # Clean destination path first to avoid git clone exit code 128
-          rm -rf devices/taoyao
+          mkdir -p tools
+          if [ ! -f "tools/mkbootimg.py" ]; then
+            echo "==> Downloading mkbootimg..."
+            wget -O tools/mkbootimg.py https://raw.githubusercontent.com/osm0sis/mkbootimg/master/mkbootimg.py
+          fi
+
+      - name: Inspect Workspace Structure
+        run: |
+          echo "==> Repository structure at root:"
+          ls -la
+
+      - name: Build UEFI Bootloader / Kernel
+        run: |
+          echo "==> Building Bootloader/Kernel..."
+          export CROSS_COMPILE=aarch64-linux-gnu-
           
-          # Clone taoyao device definition repository
-          git clone --depth 1 https://github.com/skglab-dev/ios-taoyao.git devices/taoyao
-          
-          if [ ! -d "devices/taoyao" ]; then
-            echo "Error: Device tree repository failed to clone!"
+          if [ -d "uefi" ]; then
+            cd uefi && make PLATFORM=SM7325
+          elif [ -f "Makefile" ]; then
+            make PLATFORM=SM7325 || make
+          else
+            echo "Error: No Makefile found in repository!"
             exit 1
           fi
 
-      - name: Fetch and Unpack iOS RootFS
+      - name: Package Boot Image (boot.img)
         run: |
-          IOS_VER="${{ github.event.inputs.ios_version || '16.5' }}"
-          echo "==> Fetching iOS $IOS_VER System Image..."
-          
-          if [ -f "./sysimage/fetch.sh" ]; then
-            chmod +x ./sysimage/fetch.sh
-            ./sysimage/fetch.sh --version "$IOS_VER" --device "iPhone14,7" --output-dir ./sysimage/out
-          else
-            echo "Warning: sysimage/fetch.sh not found, skipping IPSW download."
-          fi
-
-      - name: Patch & Build UEFI Bootloader (Project Silicium)
-        run: |
-          echo "==> Building UEFI Bootloader for Snapdragon 778G (SM7325)..."
-          if [ -d "devices/taoyao/uefi" ]; then
-            cd devices/taoyao/uefi
-            make CROSS_COMPILE=aarch64-linux-gnu- PLATFORM=SM7325 || true
-          else
-            echo "UEFI directory not found in device tree, skipping."
-          fi
-
-      - name: Patch & Build HackiOS XNU Kernel
-        run: |
-          if [ -f "./xnu/apply.sh" ]; then
-            echo "==> Applying XNU Patches..."
-            chmod +x ./xnu/apply.sh
-            ./xnu/apply.sh
-          fi
-          
-          echo "==> Compiling Mach-O Kernel for taoyao..."
-          export CCACHE_DIR=~/.ccache
-          export CC="ccache clang"
-          export CXX="ccache clang++"
-          
-          if [ -f "Makefile" ]; then
-            make TARGET_DEVICE=taoyao ARCH=arm64 mach -j$(nproc) || true
-          fi
-
-      - name: Package Android Boot Image (boot.img)
-        run: |
-          echo "==> Assembling boot-hackios-taoyao.img..."
           mkdir -p out
           
-          if [ -f "tools/mkbootimg.py" ]; then
-            python3 tools/mkbootimg.py \
-              --kernel devices/taoyao/uefi/build/uefi-taoyao.elf \
-              --ramdisk sysimage/out/ramdisk.img \
-              --dtb devices/taoyao/dtb.img \
-              --cmdline "console=ttyMSM0,115200n8 loglevel=7 earlycon=msm_geni_serial,0x00880000 androidboot.hardware=qcom" \
-              --base 0x00000000 \
-              --pagesize 4096 \
-              -o out/boot-hackios-taoyao.img || echo "Bootloader packaging placeholder."
-          else
-            echo "Packaging skipped or tool missing."
+          # 自动寻找编译出的 .elf 或镜像二进制文件
+          BOOT_BIN=$(find . -maxdepth 3 -name "*.elf" -o -name "Image" -o -name "mach_kernel" | head -n 1)
+          
+          if [ -z "$BOOT_BIN" ]; then
+            echo "Error: No compiled kernel binary (.elf / Image) was found after build!"
+            exit 1
           fi
+          
+          echo "==> Found boot binary: $BOOT_BIN"
+          
+          python3 tools/mkbootimg.py \
+            --kernel "$BOOT_BIN" \
+            --cmdline "console=ttyMSM0,115200n8 loglevel=7 earlycon=msm_geni_serial,0x00880000 androidboot.hardware=qcom" \
+            --base 0x00000000 \
+            --pagesize 4096 \
+            -o out/boot-hackios-taoyao.img
 
-          # Output hash if image is generated
-          if [ -f "out/boot-hackios-taoyao.img" ]; then
-            cd out && sha256sum boot-hackios-taoyao.img > checksums.txt
+          if [ ! -f "out/boot-hackios-taoyao.img" ]; then
+            echo "Error: boot-hackios-taoyao.img generation failed!"
+            exit 1
           fi
+          
+          cd out && sha256sum boot-hackios-taoyao.img > checksums.txt
 
-      - name: Upload Build Artifacts
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: HackiOS-BootImage-Xiaomi12Lite-taoyao
-          path: |
-            out/
+          path: out/
           retention-days: 14
