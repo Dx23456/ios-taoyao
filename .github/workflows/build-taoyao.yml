@@ -42,21 +42,26 @@ jobs:
             bubblewrap socat ripgrep liblzfse-dev \
             libssl-dev libffi-dev libxml2-dev zlib1g-dev \
             fastboot android-sdk-platform-tools flex bison \
-            device-tree-compiler cpio libelf-dev
+            device-tree-compiler cpio libelf-dev mkbootimg
 
       - name: Setup Packaging Tools
+        env:
+          GIT_TERMINAL_PROMPT: 0
         run: |
           mkdir -p tools
-          if [ ! -f "tools/mkbootimg.py" ]; then
-            echo "==> Fetching AOSP mkbootimg tool via git clone..."
-            rm -rf tools/mkbootimg_repo
-            git clone --depth 1 https://github.com/aosp-mirror/platform_system_tools_mkbootimg.git tools/mkbootimg_repo
-            cp tools/mkbootimg_repo/mkbootimg.py tools/mkbootimg.py
-          fi
           
-          if [ ! -f "tools/mkbootimg.py" ]; then
-            echo "Error: Failed to obtain mkbootimg.py"
-            exit 1
+          if command -v mkbootimg &> /dev/null; then
+            echo "==> Native mkbootimg binary found in system."
+          else
+            echo "==> System mkbootimg not found, pulling from LineageOS repository..."
+            rm -rf tools/mkbootimg_repo
+            git clone --depth 1 https://github.com/LineageOS/android_system_tools_mkbootimg.git tools/mkbootimg_repo || true
+            
+            if [ -f "tools/mkbootimg_repo/mkbootimg.py" ]; then
+              cp tools/mkbootimg_repo/mkbootimg.py tools/mkbootimg.py
+            else
+              echo "Warning: Could not fetch mkbootimg.py script, will rely on system path."
+            fi
           fi
 
       - name: Inspect Workspace Structure
@@ -91,7 +96,19 @@ jobs:
           
           echo "==> Found boot binary: $BOOT_BIN"
           
-          python3 tools/mkbootimg.py \
+          # 确定 mkbootimg 可执行命令
+          if command -v mkbootimg &> /dev/null; then
+            MKBOOT="mkbootimg"
+          elif [ -f "tools/mkbootimg.py" ]; then
+            MKBOOT="python3 tools/mkbootimg.py"
+          else
+            echo "Error: Neither system mkbootimg nor tools/mkbootimg.py is available!"
+            exit 1
+          fi
+          
+          echo "==> Packaging using: $MKBOOT"
+          
+          $MKBOOT \
             --kernel "$BOOT_BIN" \
             --cmdline "console=ttyMSM0,115200n8 loglevel=7 earlycon=msm_geni_serial,0x00880000 androidboot.hardware=qcom" \
             --base 0x00000000 \
