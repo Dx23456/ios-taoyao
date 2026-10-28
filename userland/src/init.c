@@ -1338,6 +1338,11 @@ test_devices(void)
 	}
 	printf("\n");
 	check(good && sum != 0, "/dev/random");
+	/* iOS bluetoothd device nodes */
+	symlink("/dev/null", "/dev/cu.bluetooth");
+	symlink("/dev/null", "/dev/uart.bluetooth");
+	symlink("/dev/null", "/dev/btwake");
+	symlink("/dev/null", "/dev/uart.log");
 }
 
 static void
