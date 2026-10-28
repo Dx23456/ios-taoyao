@@ -16,7 +16,7 @@ on:
       - 'LICENSE'
 
 jobs:
-  build-hackios-taoyao:
+  build-taoyao:
     runs-on: ubuntu-latest
 
     steps:
@@ -32,7 +32,7 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/local/share/chromium /usr/local/doc/cmake
           sudo apt-get clean
 
-      - name: Install Toolchain & Cross-Compilers
+      - name: Install Toolchains & Build Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -52,37 +52,37 @@ jobs:
           echo "==> Fetching standalone LineageOS mkbootimg tool..."
           rm -rf tools/mkbootimg_repo
           git clone --depth 1 https://github.com/LineageOS/android_system_tools_mkbootimg.git tools/mkbootimg_repo
-          
-          if [ ! -f "tools/mkbootimg_repo/mkbootimg.py" ]; then
-            echo "Error: Failed to fetch mkbootimg.py script!"
-            exit 1
-          fi
 
-      - name: Build XNU Kernel (If source present)
+      - name: Compile XNU Kernel & Sync Binaries
         run: |
-          echo "==> Checking for XNU Kernel source..."
+          echo "==> Step 1: Building/Preparing XNU Kernel (mach_kernel)..."
           export CROSS_COMPILE=aarch64-linux-gnu-
           export ARCH=arm64
           
+          # 若存在 xnu 子模組或獨立編譯指令，先進行核心編譯
           if [ -d "xnu" ]; then
-            echo "==> Building XNU Kernel from xnu/ directory..."
             cd xnu
-            if [ -f "Makefile" ]; then
-              make ARCH=arm64 TARGET=SM7325 || make ARCH=arm64 || true
-            elif [ -f "build.sh" ]; then
-              chmod +x build.sh && ./build.sh || true
-            fi
+            make ARCH=arm64 TARGET=SM7325 || make ARCH=arm64 || true
             cd ..
           elif [ -f "scripts/build_xnu.sh" ]; then
-            echo "==> Executing scripts/build_xnu.sh..."
             chmod +x scripts/build_xnu.sh && ./scripts/build_xnu.sh || true
-          else
-            echo "==> No standalone XNU source directory found, relying on main Makefile build process..."
           fi
 
-      - name: Build UEFI Bootloader & Integrated Payload
+          # 搜尋編譯產出的 mach_kernel 並同步複製至 EDK2 預期載入的目錄下
+          XNU_BIN=$(find . -not -path '*/.*' \( -name "mach_kernel" -o -name "mach" \) | head -n 1)
+          if [ -n "$XNU_BIN" ]; then
+            echo "==> Found XNU Kernel at: $XNU_BIN"
+            mkdir -p prebuilt uefi/prebuilt
+            cp "$XNU_BIN" prebuilt/mach_kernel 2>/dev/null || true
+            cp "$XNU_BIN" uefi/prebuilt/mach_kernel 2>/dev/null || true
+            echo "==> Copied $XNU_BIN to prebuilt/ places for EDK2 FDF inclusion."
+          else
+            echo "::warning:: No standalone mach_kernel found before UEFI build. Ensure EDK2 builds it internally!"
+          fi
+
+      - name: Build EDK2 UEFI Payload
         run: |
-          echo "==> Building UEFI Bootloader / Integrated Payload..."
+          echo "==> Step 2: Building UEFI Bootloader Payload for Xiaomi 12 Lite (taoyao)..."
           export CROSS_COMPILE=aarch64-linux-gnu-
           
           if [ -f "build.sh" ]; then
@@ -91,60 +91,61 @@ jobs:
             make PLATFORM=SM7325 DEVICE=taoyao || make PLATFORM=SM7325 || make
           elif [ -d "uefi" ]; then
             cd uefi
-            if [ -f "Makefile" ]; then
-              make PLATFORM=SM7325 DEVICE=taoyao || make
-            elif [ -f "build.sh" ]; then
-              chmod +x build.sh && ./build.sh
+            if [ -f "build.sh" ]; then
+              chmod +x build.sh && ./build.sh --device taoyao
+            elif [ -f "Makefile" ]; then
+              make PLATFORM=SM7325 || make
             fi
             cd ..
           else
-            echo "Error: No recognizable build entrypoint (build.sh / Makefile) found!"
+            echo "Error: No valid build entrypoint found!"
             exit 1
           fi
 
-      - name: Compile Device Tree (DTS to DTB)
+      - name: Payload & XNU Inclusion Inspection
         run: |
-          echo "==> Searching for Device Tree files..."
-          DTS_FILE=$(find . -not -path '*/.*' -name "*taoyao*.dts" -o -name "*sm7325*.dts" | head -n 1)
-          if [ -n "$DTS_FILE" ]; then
-            echo "==> Compiling $DTS_FILE to out_taoyao.dtb..."
-            dtc -I dts -O dtb -p 0x1000 "$DTS_FILE" -o out_taoyao.dtb || true
+          echo "==> Step 3: Inspecting built target binary..."
+          
+          BOOT_BIN=$(find . -not -path '*/.*' -type f \( -name "*.elf" -o -name "*.fd" -o -name "*.bin" -o -name "Image" -o -name "mach_kernel" \) | grep -i "taoyao" | head -n 1)
+          if [ -z "$BOOT_BIN" ]; then
+            BOOT_BIN=$(find . -not -path '*/.*' -not -path '*/poco*' -not -path '*/tools*' -type f \( -name "*.elf" -o -name "*.fd" -o -name "*.bin" -o -name "Image" -o -name "mach_kernel" \) | head -n 1)
+          fi
+          
+          if [ -z "$BOOT_BIN" ]; then
+            echo "Error: No UEFI/Kernel binary was generated by the build step!"
+            exit 1
+          fi
+          
+          BIN_SIZE=$(stat -c%s "$BOOT_BIN")
+          echo "==> Detected payload binary: $BOOT_BIN"
+          echo "==> Payload size: $BIN_SIZE bytes (~$((BIN_SIZE / 1024 / 1024)) MB)"
+          
+          # 核心大限檢測：低於 8MB 說明極大概率未嵌進 XNU 内核
+          if [ "$BIN_SIZE" -lt 8388608 ]; then
+            echo "----------------------------------------------------------------------"
+            echo "::warning:: Target binary is smaller than 8MB ($BIN_SIZE bytes)."
+            echo "This indicates XNU (mach_kernel) was likely NOT embedded into UEFI."
+            echo "Check your EDK2 .fdf file or prebuilt mach_kernel placement."
+            echo "----------------------------------------------------------------------"
           fi
 
       - name: Package Final Boot Image (boot-hackios-taoyao.img)
         run: |
           mkdir -p out
           
-          echo "==> Searching for compiled target payload..."
-          
-          # 優先 1：尋找標記有 taoyao 的產物
           BOOT_BIN=$(find . -not -path '*/.*' -type f \( -name "*.elf" -o -name "*.fd" -o -name "*.bin" -o -name "Image" -o -name "mach_kernel" \) | grep -i "taoyao" | head -n 1)
-          
-          # 優先 2：排除其他設備 (如 poco) 與工具目錄後搜尋
           if [ -z "$BOOT_BIN" ]; then
             BOOT_BIN=$(find . -not -path '*/.*' -not -path '*/poco*' -not -path '*/tools*' -type f \( -name "*.elf" -o -name "*.fd" -o -name "*.bin" -o -name "Image" -o -name "mach_kernel" \) | head -n 1)
           fi
           
-          if [ -z "$BOOT_BIN" ]; then
-            echo "Error: Could not locate compiled UEFI / XNU kernel binary!"
-            echo "==> Printing directory structure for debugging:"
-            find . -not -path '*/.*' -type f | sort | head -n 100
-            exit 1
-          fi
-          
-          echo "==> Selected target binary: $BOOT_BIN"
-          
-          # 檢查是否有編譯好的 DTB
           DTB_ARG=""
-          if [ -f "out_taoyao.dtb" ]; then
-            DTB_ARG="--dtb out_taoyao.dtb"
-            echo "==> Including custom compiled DTB: out_taoyao.dtb"
-          elif [ -f "prebuilt/taoyao.dtb" ]; then
-            DTB_ARG="--dtb prebuilt/taoyao.dtb"
-            echo "==> Including prebuilt DTB: prebuilt/taoyao.dtb"
+          DTB_FILE=$(find . -not -path '*/.*' \( -name "*taoyao*.dtb" -o -name "*sm7325*.dtb" \) | head -n 1)
+          if [ -n "$DTB_FILE" ]; then
+            DTB_ARG="--dtb $DTB_FILE"
+            echo "==> Including Device Tree DTB: $DTB_FILE"
           fi
           
-          echo "==> Packaging using LineageOS mkbootimg..."
+          echo "==> Packaging boot image via LineageOS mkbootimg..."
           python3 tools/mkbootimg_repo/mkbootimg.py \
             --kernel "$BOOT_BIN" \
             $DTB_ARG \
@@ -154,12 +155,12 @@ jobs:
             -o out/boot-hackios-taoyao.img
 
           if [ ! -f "out/boot-hackios-taoyao.img" ]; then
-            echo "Error: Output boot image was not generated!"
+            echo "Error: Packaging failed, out/boot-hackios-taoyao.img not found!"
             exit 1
           fi
           
           IMG_SIZE=$(stat -c%s "out/boot-hackios-taoyao.img")
-          echo "==> SUCCESS: boot-hackios-taoyao.img generated! Size: ${IMG_SIZE} bytes."
+          echo "==> Packaging SUCCESS! Finalboot image size: ${IMG_SIZE} bytes (~$((IMG_SIZE / 1024 / 1024)) MB)."
           
           cd out && sha256sum boot-hackios-taoyao.img > checksums.txt
 
