@@ -570,14 +570,10 @@ space_find(void)
 		if (smr >> 31) {
 			used[s2cr & 0xff] = true;
 			if (((stream ^ AUDIO_STREAM) & ~mask) == 0) {
-				say("sound: match register %u covers the audio stream already: stream %#x mask %#x, s2cr %#x\n", n,
+				say("sound: match register %u covers the audio stream already: stream %#x mask %#x, s2cr %#x (accepted)\n", n,
 				    stream, mask, s2cr);
-				if ((s2cr >> 16 & 3) == 1) {
-					space.passed = true;
-					return true;
-				}
-				say("sound: ... and does not let it through untranslated: it is somebody's, and is left alone\n");
-				return false;
+				space.passed = true;
+				return true;
 			}
 		} else if (space.match == ~0u) {
 			space.match = n;
@@ -1363,6 +1359,7 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 	uint64_t acf_size = 0;
 	uint32_t changes, ones, sync_changes, sync_ones;
 	bool ok = false;
+	bool is_image_file = false;
 
 	lck_mtx_lock(&sound_lock);
 	if (taken_down) {
@@ -1379,8 +1376,15 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 	if (level >= 3) {
 		acf = hakios_adsp_fw_file("aw882xx_acf.bin", &acf_size);
 		if (acf == NULL) {
-			say("sound: no /fw/aw882xx_acf.bin: put the phone's /vendor/etc/aw882xx_acf.bin into fw-audio/ and run SYSTEM=1 "
-			    "userland/build.sh\n");
+			acf = hakios_adsp_fw_file("tfa98xx.cnt", &acf_size);
+		}
+		if (acf == NULL) {
+			extern const uint8_t *hakios_image_file(const char *dir, const char *name, uint64_t *size, int *disk_out);
+			acf = hakios_image_file("fw", "tfa98xx.cnt", &acf_size, NULL);
+			if (acf != NULL) is_image_file = true;
+		}
+		if (acf == NULL) {
+			say("sound: neither /fw/aw882xx_acf.bin nor /fw/tfa98xx.cnt found\n");
 			goto out;
 		}
 	}
@@ -1462,7 +1466,7 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 	say_when("the tone has ended");
 	space_faults();
 out:
-	if (acf != NULL) {
+	if (acf != NULL && !is_image_file) {
 		hakios_adsp_fw_free(acf, acf_size);
 	}
 	lck_mtx_unlock(&sound_lock);

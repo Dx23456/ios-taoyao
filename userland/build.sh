@@ -417,6 +417,10 @@ if [ -f ../fw-wifi/wpss.mdt ]; then
 fi
 # ... and the vibration motor's waveforms, the phone's /vendor/firmware/aw8697_haptic.bin, from ../fw-haptic
 # (bsd/dev/hakios.haptic.c, haptic=3; 3.6 KB, the vendor's and not in the repository either)
+if [ -f ../fw-audio/tfa98xx.cnt ]; then
+	mkdir -p root/fw
+	install -m 0644 ../fw-audio/tfa98xx.cnt root/fw/
+fi
 if [ -f ../fw-haptic/aw8697_haptic.bin ]; then
 	mkdir -p root/fw
 	install -m 0644 ../fw-haptic/aw8697_haptic.bin root/fw/

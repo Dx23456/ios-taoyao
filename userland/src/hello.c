@@ -70,6 +70,7 @@ start(void)
 	put(fd, ".\n");
 
 	/* Process 1 is not supposed to exit; doing so panics the kernel, which ends the test run. */
+	for (volatile unsigned long i = 0; i < 800000000UL; i++) {} 
 	syscall3(SYS_exit, 0, 0, 0);
 	for (;;) {
 	}

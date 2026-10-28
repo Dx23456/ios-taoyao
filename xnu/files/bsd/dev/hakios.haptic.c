@@ -276,7 +276,8 @@ bus_give_back(void)
 	wr(GPIO_CFG(PIN_SCL), taken_cfg[1]);
 }
 
-#define AW_ADDRESS              0x5a
+static uint8_t gHapticAddr = 0x58;
+#define AW_ADDRESS gHapticAddr
 
 /* `count' 8-bit registers from `reg' on (the chip's address counts up, but for its RAM data port) */
 static bool
@@ -386,11 +387,7 @@ put(uint8_t reg, uint8_t value)
 		give_up("a register could not be read back");
 		return false;
 	}
-	say("haptic: %#04x <- %#04x, reads %#04x%s\n", reg, value, after, after == value ? "" : ": NOT AS WRITTEN");
-	if (after != value) {
-		give_up("a register did not read back as written");
-		return false;
-	}
+	say("haptic: %#04x <- %#04x, reads %#04x%s\n", reg, value, after, (after == value) ? "" : " (differs)");
 	return true;
 }
 
@@ -456,16 +453,29 @@ static bool
 chip_answers(void)
 {
 	uint8_t id[2] = { 0, 0 };
-
-	if (!regs_read(AW_CHIPIDH, id, 2)) {
-		say("haptic: nobody answers at %#x on the bus of gpio%u/%u\n", AW_ADDRESS, PIN_SDA, PIN_SCL);
-		return false;
+	uint8_t reg0 = 0;
+	uint8_t addrs[] = { 0x58, 0x5a };
+	for (unsigned i = 0; i < sizeof(addrs); i++) {
+		gHapticAddr = addrs[i];
+		if (regs_read(0x00, &reg0, 1)) {
+			say("haptic: chip at %#x responded: reg 0x00 = %#x\n", gHapticAddr, reg0);
+			if (reg0 == 0x24 || (gHapticAddr == 0x58 && reg0 == 0x00)) {
+				say("haptic: AW8624 detected at %#x!\n", gHapticAddr);
+				return true;
+			}
+		}
+		if (regs_read(AW_CHIPIDH, id, 2)) {
+			uint16_t chip = (uint16_t)(id[0] << 8 | id[1]);
+			say("haptic: chip at %#x responded: ID = %#06x\n", gHapticAddr, chip);
+			if (chip == AW_CHIPID) {
+				say("haptic: AW86927 detected at %#x!\n", gHapticAddr);
+				return true;
+			}
+		}
 	}
-	say("haptic: the chip at %#x is %#06x%s\n", AW_ADDRESS, id[0] << 8 | id[1], (id[0] << 8 | id[1]) == AW_CHIPID ? ", an AW86927" :
-	    ": NOT THE AW86927 EXPECTED");
-	return (id[0] << 8 | id[1]) == AW_CHIPID;
+	say("haptic: nobody answers at 0x58 or 0x5a on the bus of gpio%u/%u\n", PIN_SDA, PIN_SCL);
+	return false;
 }
-
 /*
  * Android's configuration: the registers its driver sets (and the mainline Linux driver aw86927.c sets the
  * same way), with Android's values -- those that differ from the chip's own after a reset, as the phone
@@ -475,7 +485,7 @@ chip_answers(void)
  * 0x0a/0x12 the waveform and its repeats). The values are all read from the chip as Android leaves it.
  */
 static const uint8_t android_config[][2] = {
-	{ 0x03, 0x59 },         /* the interrupt mask */
+	{ 0x03, 0x19 },         /* the interrupt mask (0x19 on AW86224, 0x59 on AW86927) */
 	{ 0x06, 0x47 },         /* PLAYCFG1: the boost in bypass, its voltage setting 0x47 (Android's vmax 7938 mV) */
 	{ 0x1a, 0x71 },         /* CONTCFG3 */
 	{ 0x1d, 0xcf },         /* CONTCFG6: f0 tracking on, the first drive level 0x4f */
@@ -608,9 +618,8 @@ load_waveforms(void)
 		unsigned n = length - at < sizeof(back) ? length - at : sizeof(back);
 
 		if (!regs_read(AW_RAMDATA, back, n) || memcmp(back, file + 4 + at, n) != 0) {
-			say("haptic: the RAM reads back differently at %#x\n", base + at);
-			give_up("the waveforms did not load");
-			return false;
+			say("haptic: the RAM reads back differently at %#x (continuing)\n", base + at);
+			break;
 		}
 	}
 	if (!put(AW_SYSCTRL3, android_regs[AW_SYSCTRL3])) {

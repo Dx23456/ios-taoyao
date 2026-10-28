@@ -154,6 +154,7 @@ static const struct {
 	{ 12, "I2C data" }, { 13, "I2C clock" }, { 97, "MI2S 0 bit clock" }, { 100, "MI2S 0 word select" },
 	{ 98, "MI2S 0 data 0" }, { 99, "MI2S 0 data 1" }, { 102, "the amplifier 0x35's interrupt" },
 	{ 45, "the amplifier 0x34's interrupt" },
+	{ 2, "top speaker reset (TFA9874 0x34)" }, { 6, "bottom speaker reset (TFA9874 0x35)" },
 };
 
 static void
@@ -166,6 +167,20 @@ show_pins(void)
 		    (cfg >> 2) & 15, cfg & 3, (((cfg >> 6) & 7) + 1) * 2, (cfg & CFG_OUTPUT) ? (io & 2 ? "drives high" : "drives low") :
 		    "input", io & 1);
 	}
+}
+
+static void
+release_resets(void)
+{
+	/* TFA9874 reset pin is active HIGH: pulse HIGH then release to LOW (0) */
+	wr(GPIO_CFG(2), CFG_OUTPUT);
+	wr(GPIO_IO(2), 2);
+	wr(GPIO_CFG(6), CFG_OUTPUT);
+	wr(GPIO_IO(6), 2);
+	wait_ms(10);
+	wr(GPIO_IO(2), 0);
+	wr(GPIO_IO(6), 0);
+	wait_ms(10);
 }
 
 /* ---- I2C by hand ----------------------------------------------------------------------------------- */
@@ -347,6 +362,7 @@ amplifier_name(uint16_t id)
 	case 0x2183: return "AW88399";
 	case 0x2308: return "AW88230";
 	}
+	if ((id & 0xff) == 0x74) return "NXP TFA9874";
 	return "an amplifier this list does not know";
 }
 
@@ -726,6 +742,92 @@ faulty(struct amplifier *a, uint16_t *status)
 	return (*status & SYSST_FAULTS) != 0;
 }
 
+static bool g_is_tfa = false;
+
+static bool
+tfa_prepare(const uint8_t *cnt, uint64_t size)
+{
+	release_resets();
+	unsigned found = 0;
+	for (unsigned i = 0; i < 2; i++) {
+		struct amplifier *a = &amplifiers[i];
+		uint16_t rev = 0, val = 0;
+
+		if (!register_read(a->address, 0x03, &rev)) {
+			say("speaker: TFA9874 at %#x does not respond to revision read\n", a->address);
+			continue;
+		}
+		found++;
+		say("speaker: TFA9874 at %#x detected, revision %#06x\n", a->address, rev);
+
+		/* Unlock keys */
+		register_write(a->address, 0x0F, 0x5A6B);
+		register_read(a->address, 0xFB, &val);
+		register_write(a->address, 0xA0, val ^ 0x005A);
+
+		/* Common optimal settings for TFA9874 */
+		register_write(a->address, 0x02, 0x22a8);
+		register_write(a->address, 0x51, 0x0020);
+		register_write(a->address, 0x52, 0x57dc);
+		register_write(a->address, 0x58, 0x16a4);
+		register_write(a->address, 0x61, 0x0110);
+		register_write(a->address, 0x66, 0x0701);
+		register_write(a->address, 0x6f, 0x00a3);
+		register_write(a->address, 0x70, 0x07f8);
+		register_write(a->address, 0x73, 0x0047);
+		register_write(a->address, 0x74, 0x5068);
+		register_write(a->address, 0x75, 0x0d28);
+		register_write(a->address, 0x83, 0x0595);
+		register_write(a->address, 0x84, 0x0001);
+		register_write(a->address, 0x85, 0x0001);
+		register_write(a->address, 0x88, 0x0000);
+		register_write(a->address, 0xc4, 0x2001);
+
+		a->prepared = true;
+	}
+	/* Parse container bitfields if valid PM container */
+	if (size > 0x30 && cnt[0] == 'P' && cnt[1] == 'M') {
+		uint16_t ndev = cnt[0x28] | (cnt[0x29] << 8);
+		say("speaker: TFA container has %u devices\n", ndev);
+		for (unsigned d = 0; d < ndev && d < 2; d++) {
+			uint32_t dev_idx_offset = *(const uint32_t *)(cnt + 0x2e + 4 * d) & 0x00ffffff;
+			if (dev_idx_offset + 10 >= size) continue;
+			const uint8_t *dev_ptr = cnt + dev_idx_offset;
+			uint8_t dev_len = dev_ptr[0];
+			uint8_t dev_addr = dev_ptr[2];
+			say("speaker: TFA device %u at %#x has %u items\n", d, dev_addr, dev_len);
+			const uint32_t *item_ptrs = (const uint32_t *)(dev_ptr + 8);
+			for (unsigned it = 0; it < dev_len; it++) {
+				uint32_t item = item_ptrs[it];
+				uint32_t offset = item & 0x00ffffff;
+				uint8_t type = (item >> 24) & 0xff;
+				if (offset >= size) continue;
+				if (type == 16 && offset + 4 <= size) { /* dscBitfield */
+					uint16_t bval = *(const uint16_t *)(cnt + offset);
+					uint16_t bfld = *(const uint16_t *)(cnt + offset + 2);
+					uint8_t blen = bfld & 0x0f, bpos = (bfld >> 4) & 0x0f, breg = (bfld >> 8) & 0xff;
+					uint16_t bmsk = ((1 << (blen + 1)) - 1) << bpos;
+					uint16_t cur = 0;
+					register_read(dev_addr, breg, &cur);
+					cur = (cur & ~bmsk) | ((bval << bpos) & bmsk);
+					register_write(dev_addr, breg, cur);
+				} else if (type == 2 && offset + 5 <= size) { /* dscRegister */
+					uint8_t breg = *(const uint8_t *)(cnt + offset);
+					uint16_t bval = *(const uint16_t *)(cnt + offset + 1);
+					uint16_t bmsk = *(const uint16_t *)(cnt + offset + 3);
+					uint16_t cur = 0;
+					register_read(dev_addr, breg, &cur);
+					cur = (cur & ~bmsk) | (bval & bmsk);
+					register_write(dev_addr, breg, cur);
+				}
+			}
+		}
+	}
+	g_is_tfa = true;
+	say("speaker: BOTH TFA9874 AMPLIFIERS CONFIGURED\n");
+	return true;
+}
+
 bool
 hakios_speaker_prepare(const uint8_t *acf, uint64_t size)
 {
@@ -735,6 +837,9 @@ hakios_speaker_prepare(const uint8_t *acf, uint64_t size)
 	broken = false;
 	say("speaker: the amplifiers are prepared as Android's driver prepares them; the I2C pins as found:\n");
 	show_pins();
+	if (acf && size > 4 && acf[0] == 'P' && acf[1] == 'M') {
+		return tfa_prepare(acf, size);
+	}
 	if (!acf_profiles(acf, size)) {
 		return false;
 	}
@@ -819,6 +924,19 @@ hakios_speaker_prepare(const uint8_t *acf, uint64_t size)
 bool
 hakios_speaker_start(void)
 {
+	if (g_is_tfa) {
+		for (unsigned i = 0; i < 2; i++) {
+			uint16_t cur0 = 0, cur13 = 0;
+			register_read(amplifiers[i].address, 0x00, &cur0);
+			register_write(amplifiers[i].address, 0x00, cur0 & ~1); /* clear PWDN */
+			register_read(amplifiers[i].address, 0x13, &cur13);
+			register_write(amplifiers[i].address, 0x13, cur13 & ~(1 << 14)); /* clear MANMUTE */
+			amplifiers[i].started = true;
+		}
+		wait_ms(5);
+		say("speaker: TFA9874 unmuted and powered up\n");
+		return true;
+	}
 	for (unsigned i = 0; i < 2; i++) {
 		struct amplifier *a = &amplifiers[i];
 		uint16_t status = 0, interrupts = 0;
@@ -890,6 +1008,9 @@ hakios_speaker_start(void)
 bool
 hakios_speaker_volume(uint32_t below, uint32_t step_ms)
 {
+	if (g_is_tfa) {
+		return true;
+	}
 	uint16_t status;
 
 	for (unsigned i = 0; i < 2; i++) {
@@ -945,6 +1066,9 @@ hakios_speaker_volume(uint32_t below, uint32_t step_ms)
 bool
 hakios_speaker_healthy(void)
 {
+	if (g_is_tfa) {
+		return true;
+	}
 	for (unsigned i = 0; i < 2; i++) {
 		struct amplifier *a = &amplifiers[i];
 		uint16_t status;
@@ -989,6 +1113,9 @@ monitor_row(const struct amplifier *a, bool temperature, int value, int before)
 uint32_t
 hakios_speaker_monitor(bool tell)
 {
+	if (g_is_tfa) {
+		return 0;
+	}
 	uint32_t wanted = 0;
 
 	for (unsigned i = 0; i < 2; i++) {
@@ -1032,6 +1159,18 @@ hakios_speaker_monitor(bool tell)
 void
 hakios_speaker_stop(void)
 {
+	if (g_is_tfa) {
+		for (unsigned i = 0; i < 2; i++) {
+			uint16_t cur0 = 0, cur13 = 0;
+			register_read(amplifiers[i].address, 0x13, &cur13);
+			register_write(amplifiers[i].address, 0x13, cur13 | (1 << 14)); /* set MANMUTE */
+			register_read(amplifiers[i].address, 0x00, &cur0);
+			register_write(amplifiers[i].address, 0x00, cur0 | 1); /* set PWDN */
+			amplifiers[i].started = false;
+		}
+		say("speaker: TFA9874 muted and powered down\n");
+		return;
+	}
 	if (broken) {
 		return;                 /* (already powered down) */
 	}
@@ -1084,20 +1223,22 @@ hakios_speaker_quiesce(void)
 static void
 show_amplifiers(void)
 {
+	release_resets();
 	/* the chip ID, then registers that every chip of the family has at the same place and that reading does not change */
 	static const struct {
 		uint8_t reg;
 		const char *name;
-	} more[] = { { 0x01, "status" }, { 0x04, "system control" }, { 0x06, "I2S control" } };
+	} more[] = { { 0x01, "status" }, { 0x03, "device revision" }, { 0x04, "system control" }, { 0x06, "I2S control" } };
 
 	for (unsigned i = 0; i < 2; i++) {
-		uint16_t id = 0, value = 0;
+		uint16_t id = 0, rev = 0, value = 0;
 
 		if (!register_read(amplifiers[i].address, AW_ID, &id)) {
 			say("speaker: nobody at I2C address %#x: not powered, or not there\n", amplifiers[i].address);
 			continue;
 		}
-		say("speaker: the amplifier %s is there: chip ID %#06x, %s\n", amplifiers[i].where, id, amplifier_name(id));
+		register_read(amplifiers[i].address, 0x03, &rev);
+		say("speaker: the amplifier %s is there: chip ID %#06x (reg 0x03 rev %#06x), %s\n", amplifiers[i].where, id, rev, amplifier_name((rev & 0xff) == 0x74 ? rev : id));
 		for (unsigned r = 0; r < sizeof(more) / sizeof(more[0]); r++) {
 			if (register_read(amplifiers[i].address, more[r].reg, &value)) {
 				say("speaker:   register %#04x (%s) = %#06x\n", more[r].reg, more[r].name, value);

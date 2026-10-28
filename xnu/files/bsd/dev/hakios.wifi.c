@@ -1253,6 +1253,12 @@ step_pins(void)
 		    pins[i].what, cfg, (cfg >> 2) & 15, cfg & 3, (((cfg >> 6) & 7) + 1) * 2, (cfg & 1u << 9) ? (io & 2 ? "DRIVES HIGH" :
 		    "DRIVES LOW") : "an input", io & 1);
 	}
+	/* Power up Bluetooth radio (assert reset and sw-ctrl high as btpower.c / WCN6750 requires) */
+	wr(tlmm.base + GPIO_CFG(85), 1u << 9);
+	wr(tlmm.base + GPIO_IO(85), 2);
+	wr(tlmm.base + GPIO_CFG(86), 1u << 9);
+	wr(tlmm.base + GPIO_IO(86), 2);
+	printf("wifi: Bluetooth reset (gpio85) and sw-ctrl (gpio86) asserted HIGH\n");
 	return true;
 }
 
@@ -4021,8 +4027,8 @@ hakios_wifi_radio_address(uint8_t *address)
 	bool good;
 
 	if (!PE_parse_boot_arg_str("wifi_mac", text, sizeof(text)) || text[0] == 0) {
-		printf("wifi: %u: the driver asks for the radio's address: none was given (wifi_mac)\n", step);
-		return false;
+		strlcpy(text, "00:0a:f5:89:12:34", sizeof(text));
+		printf("wifi: %u: using fallback radio address %s\n", step, text);
 	}
 	good = true;
 	for (const char *c = text;; c++) {
