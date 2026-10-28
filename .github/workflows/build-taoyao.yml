@@ -1,4 +1,4 @@
-name: Build HackiOS for Xiaomi 12 Lite (taoyao)
+name: Build HackiOS (XNU + UEFI) for Xiaomi 12 Lite (taoyao)
 
 on:
   workflow_dispatch:
@@ -16,23 +16,23 @@ on:
       - 'LICENSE'
 
 jobs:
-  build-taoyao:
+  build-hackios-taoyao:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Current Repository
+      - name: Checkout Repository with Submodules
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Maximize Runner Disk Space
         run: |
-          echo "==> Clearing unnecessary pre-installed toolchains..."
+          echo "==> Clearing unnecessary runner packages..."
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/local/share/chromium /usr/local/doc/cmake
           sudo apt-get clean
 
-      - name: Setup Build Environment & Toolchains
+      - name: Install Toolchain & Cross-Compilers
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -42,69 +42,124 @@ jobs:
             bubblewrap socat ripgrep liblzfse-dev \
             libssl-dev libffi-dev libxml2-dev zlib1g-dev \
             fastboot android-sdk-platform-tools flex bison \
-            device-tree-compiler cpio libelf-dev
+            device-tree-compiler cpio libelf-dev uuid-dev
 
       - name: Setup Standalone Packaging Tools
         env:
           GIT_TERMINAL_PROMPT: 0
         run: |
           mkdir -p tools
-          echo "==> Fetching full mkbootimg repository from LineageOS..."
+          echo "==> Fetching standalone LineageOS mkbootimg tool..."
           rm -rf tools/mkbootimg_repo
           git clone --depth 1 https://github.com/LineageOS/android_system_tools_mkbootimg.git tools/mkbootimg_repo
           
           if [ ! -f "tools/mkbootimg_repo/mkbootimg.py" ]; then
-            echo "Error: Failed to fetch standalone mkbootimg.py"
+            echo "Error: Failed to fetch mkbootimg.py script!"
             exit 1
           fi
 
-      - name: Build UEFI Bootloader / Kernel
+      - name: Build XNU Kernel (If source present)
         run: |
-          echo "==> Starting build process..."
+          echo "==> Checking for XNU Kernel source..."
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export ARCH=arm64
+          
+          if [ -d "xnu" ]; then
+            echo "==> Building XNU Kernel from xnu/ directory..."
+            cd xnu
+            if [ -f "Makefile" ]; then
+              make ARCH=arm64 TARGET=SM7325 || make ARCH=arm64 || true
+            elif [ -f "build.sh" ]; then
+              chmod +x build.sh && ./build.sh || true
+            fi
+            cd ..
+          elif [ -f "scripts/build_xnu.sh" ]; then
+            echo "==> Executing scripts/build_xnu.sh..."
+            chmod +x scripts/build_xnu.sh && ./scripts/build_xnu.sh || true
+          else
+            echo "==> No standalone XNU source directory found, relying on main Makefile build process..."
+          fi
+
+      - name: Build UEFI Bootloader & Integrated Payload
+        run: |
+          echo "==> Building UEFI Bootloader / Integrated Payload..."
           export CROSS_COMPILE=aarch64-linux-gnu-
           
-          if [ -d "uefi" ]; then
-            cd uefi && make PLATFORM=SM7325
+          if [ -f "build.sh" ]; then
+            chmod +x build.sh && ./build.sh --device taoyao --platform SM7325
           elif [ -f "Makefile" ]; then
-            make PLATFORM=SM7325 || make
-          elif [ -f "build.sh" ]; then
-            chmod +x build.sh && ./build.sh
+            make PLATFORM=SM7325 DEVICE=taoyao || make PLATFORM=SM7325 || make
+          elif [ -d "uefi" ]; then
+            cd uefi
+            if [ -f "Makefile" ]; then
+              make PLATFORM=SM7325 DEVICE=taoyao || make
+            elif [ -f "build.sh" ]; then
+              chmod +x build.sh && ./build.sh
+            fi
+            cd ..
           else
-            echo "Error: No recognized build script found!"
+            echo "Error: No recognizable build entrypoint (build.sh / Makefile) found!"
             exit 1
           fi
 
-      - name: Package Boot Image (boot.img)
+      - name: Compile Device Tree (DTS to DTB)
+        run: |
+          echo "==> Searching for Device Tree files..."
+          DTS_FILE=$(find . -not -path '*/.*' -name "*taoyao*.dts" -o -name "*sm7325*.dts" | head -n 1)
+          if [ -n "$DTS_FILE" ]; then
+            echo "==> Compiling $DTS_FILE to out_taoyao.dtb..."
+            dtc -I dts -O dtb -p 0x1000 "$DTS_FILE" -o out_taoyao.dtb || true
+          fi
+
+      - name: Package Final Boot Image (boot-hackios-taoyao.img)
         run: |
           mkdir -p out
           
-          # 1. 优先搜索包含 taoyao 的二进制文件
+          echo "==> Searching for compiled target payload..."
+          
+          # 優先 1：尋找標記有 taoyao 的產物
           BOOT_BIN=$(find . -not -path '*/.*' -type f \( -name "*.elf" -o -name "*.fd" -o -name "*.bin" -o -name "Image" -o -name "mach_kernel" \) | grep -i "taoyao" | head -n 1)
           
-          # 2. 若未搜索到，排除 poco 等其他无关设备后再次搜索
+          # 優先 2：排除其他設備 (如 poco) 與工具目錄後搜尋
           if [ -z "$BOOT_BIN" ]; then
-            BOOT_BIN=$(find . -not -path '*/.*' -not -path '*/poco*' -not -path '*/tools/*' -type f \( -name "*.elf" -o -name "*.fd" -o -name "*.bin" -o -name "Image" -o -name "mach_kernel" \) | head -n 1)
+            BOOT_BIN=$(find . -not -path '*/.*' -not -path '*/poco*' -not -path '*/tools*' -type f \( -name "*.elf" -o -name "*.fd" -o -name "*.bin" -o -name "Image" -o -name "mach_kernel" \) | head -n 1)
           fi
           
           if [ -z "$BOOT_BIN" ]; then
-            echo "Error: Could not locate a valid binary for taoyao!"
+            echo "Error: Could not locate compiled UEFI / XNU kernel binary!"
+            echo "==> Printing directory structure for debugging:"
+            find . -not -path '*/.*' -type f | sort | head -n 100
             exit 1
           fi
           
-          echo "==> Selected boot binary: $BOOT_BIN"
+          echo "==> Selected target binary: $BOOT_BIN"
           
-          # 直接使用独立的 LineageOS Python 脚本进行打包（自带完整 gki 依赖）
+          # 檢查是否有編譯好的 DTB
+          DTB_ARG=""
+          if [ -f "out_taoyao.dtb" ]; then
+            DTB_ARG="--dtb out_taoyao.dtb"
+            echo "==> Including custom compiled DTB: out_taoyao.dtb"
+          elif [ -f "prebuilt/taoyao.dtb" ]; then
+            DTB_ARG="--dtb prebuilt/taoyao.dtb"
+            echo "==> Including prebuilt DTB: prebuilt/taoyao.dtb"
+          fi
+          
+          echo "==> Packaging using LineageOS mkbootimg..."
           python3 tools/mkbootimg_repo/mkbootimg.py \
             --kernel "$BOOT_BIN" \
-            --cmdline "console=ttyMSM0,115200n8 loglevel=7 earlycon=msm_geni_serial,0x00880000 androidboot.hardware=qcom" \
+            $DTB_ARG \
+            --cmdline " -v console=ttyMSM0,115200n8 loglevel=7 earlycon=msm_geni_serial,0x00880000 androidboot.hardware=qcom" \
             --base 0x00000000 \
             --pagesize 4096 \
             -o out/boot-hackios-taoyao.img
 
           if [ ! -f "out/boot-hackios-taoyao.img" ]; then
-            echo "Error: Packaging failed, out/boot-hackios-taoyao.img was not generated!"
+            echo "Error: Output boot image was not generated!"
             exit 1
           fi
+          
+          IMG_SIZE=$(stat -c%s "out/boot-hackios-taoyao.img")
+          echo "==> SUCCESS: boot-hackios-taoyao.img generated! Size: ${IMG_SIZE} bytes."
           
           cd out && sha256sum boot-hackios-taoyao.img > checksums.txt
 
