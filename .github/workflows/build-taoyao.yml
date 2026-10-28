@@ -42,14 +42,21 @@ jobs:
             bubblewrap socat ripgrep liblzfse-dev \
             libssl-dev libffi-dev libxml2-dev zlib1g-dev \
             fastboot android-sdk-platform-tools flex bison \
-            device-tree-compiler cpio libelf-dev wget
+            device-tree-compiler cpio libelf-dev
 
       - name: Setup Packaging Tools
         run: |
           mkdir -p tools
           if [ ! -f "tools/mkbootimg.py" ]; then
-            echo "==> Downloading mkbootimg..."
-            wget -O tools/mkbootimg.py https://raw.githubusercontent.com/osm0sis/mkbootimg/master/mkbootimg.py
+            echo "==> Fetching AOSP mkbootimg tool via git clone..."
+            rm -rf tools/mkbootimg_repo
+            git clone --depth 1 https://github.com/aosp-mirror/platform_system_tools_mkbootimg.git tools/mkbootimg_repo
+            cp tools/mkbootimg_repo/mkbootimg.py tools/mkbootimg.py
+          fi
+          
+          if [ ! -f "tools/mkbootimg.py" ]; then
+            echo "Error: Failed to obtain mkbootimg.py"
+            exit 1
           fi
 
       - name: Inspect Workspace Structure
@@ -75,11 +82,10 @@ jobs:
         run: |
           mkdir -p out
           
-          # 自动寻找编译出的 .elf 或镜像二进制文件
-          BOOT_BIN=$(find . -maxdepth 3 -name "*.elf" -o -name "Image" -o -name "mach_kernel" | head -n 1)
+          BOOT_BIN=$(find . -maxdepth 3 \( -name "*.elf" -o -name "Image" -o -name "mach_kernel" \) | head -n 1)
           
           if [ -z "$BOOT_BIN" ]; then
-            echo "Error: No compiled kernel binary (.elf / Image) was found after build!"
+            echo "Error: No compiled kernel binary (.elf / Image / mach_kernel) was found after build!"
             exit 1
           fi
           
