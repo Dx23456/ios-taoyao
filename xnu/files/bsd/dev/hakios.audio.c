@@ -309,7 +309,7 @@ audio_recording_init(void)
 	size = sizeof(*header) + (uint64_t)seconds * (HAKIOS_AUDIO_RATE * HAKIOS_AUDIO_FRAME + 100 * sizeof(struct rec_block));
 	size = round_page(size);
 	/* one piece of physical memory: the loader will send it over USB as it lies */
-	if (kmem_alloc_contig(kernel_map, &memory, size, PAGE_MASK, 0, 0, KMA_KOBJECT | KMA_ZERO | KMA_DATA,
+	if (kmem_alloc_contig(kernel_map, &memory, size, PAGE_MASK, 0, 0, KMA_DATA | KMA_ZERO,
 	    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
 		printf("hakios-audio: no memory for a recording of %u s (%llu MB)\n", seconds, size >> 20);
 		return;

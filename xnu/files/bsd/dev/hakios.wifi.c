@@ -3702,7 +3702,7 @@ static bool
 radio_enter(uint64_t address, uint64_t physical, uint64_t size, uint64_t attributes)
 {
 	if (radio_space.tables == 0) {
-		if (kmem_alloc(kernel_map, &radio_space.tables, round_page(4096 * RADIO_TABLES), KMA_KOBJECT | KMA_ZERO | KMA_DATA,
+		if (kmem_alloc(kernel_map, &radio_space.tables, round_page(4096 * RADIO_TABLES), KMA_DATA | KMA_ZERO,
 		    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
 			return false;
 		}

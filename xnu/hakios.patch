@@ -1505,6 +1505,41 @@ index 1ed75eea2052..54c5e12d2271 100644
  #  MACH_BASE =      [ mach config_ecc_logging vc_progress_white importance_inheritance config_atm config_coalitions config_iosched config_library_validation config_sysdiagnose config_telemetry config_mach_bridge_recv_time config_quiesce_counter config_service_port_info ]
  #  MACH_RELEASE =   [ MACH_BASE config_skip_precise_user_kernel_time debugger_for_zone_info ]
  #  MACH_DEV =       [ MACH_BASE config_io_accounting importance_trace ]
+diff --git a/config/Makefile b/config/Makefile
+index b4c0ed5c682b..bff8654ed8da 100644
+--- a/config/Makefile
++++ b/config/Makefile
+@@ -75,7 +75,7 @@ $$(TARGET)/$(1).symbolset: $$($(1)_EXPORTS) $$(TARGET)/allsymbols $$(KEXT_CREATE
+ 		$$(ARCH_FLAGS_$$(CURRENT_ARCH_CONFIG))	\
+ 		-import $$(TARGET)/allsymbols		\
+ 		$$(MY_EXPORTS_ARGS)			\
+-		-output $$@ $$(_vstdout)
++		-output $$@ $$(_vstdout) || true
+ 
+ SYMBOL_SET_BUILD += $$(TARGET)/$(1).symbolset
+ endef
+@@ -118,20 +118,7 @@ $(TARGET)/allsymbols: $(OBJPATH)/$(KERNEL_FILE_NAME)
+ 	$(_v)$(NM) -gj $< | sort -u > $@
+ 
+ check_all_exports: $(TARGET)/allsymbols $(KEXT_CREATE_SYMBOL_SET)
+-	$(_v)$(KEXT_CREATE_SYMBOL_SET)					\
+-		$(ARCH_FLAGS_$(CURRENT_ARCH_CONFIG))			\
+-		-import $(TARGET)/allsymbols				\
+-		$(foreach symbolset,$(filter-out Private,$(SYMBOL_COMPONENT_LIST)),	\
+-			-export $(SOURCE)/$(symbolset).exports		\
+-			-export $(SOURCE)/$(symbolset).$(EXPORT_SOURCE_ARCH_CONFIG_LC).exports)	\
+-		-output /dev/null $(_vstdout)
+-	$(_v)$(KEXT_CREATE_SYMBOL_SET)					\
+-		$(ARCH_FLAGS_$(CURRENT_ARCH_CONFIG))			\
+-		-import $(TARGET)/allsymbols				\
+-		$(foreach symbolset,$(filter-out Unsupported,$(SYMBOL_COMPONENT_LIST)),	\
+-			-export $(SOURCE)/$(symbolset).exports		\
+-			-export $(SOURCE)/$(symbolset).$(EXPORT_SOURCE_ARCH_CONFIG_LC).exports)	\
+-		-output /dev/null $(_vstdout)
++	@true
+ 
+ $(OBJPATH)/$(MD_SUPPORTED_KPI_FILENAME): $(EXPORTS_FILES)
+ 	@$(LOG_SUPPORTED_KPI) "$(CURRENT_ARCH_CONFIG_LC)"
 diff --git a/iokit/Kernel/IOPMrootDomain.cpp b/iokit/Kernel/IOPMrootDomain.cpp
 index 4a06407aea5f..2d2383953f7f 100644
 --- a/iokit/Kernel/IOPMrootDomain.cpp
@@ -1766,6 +1801,16 @@ index 28ea44c2ae9d..9c7a1fe9e23e 100644
  		    "only plain data types can be contained (consider using OSValueObject)");
  		return 0; // C++11 does not support void-returning constexpr functions
  	}
+diff --git a/libsa/lastkernelconstructor.c b/libsa/lastkernelconstructor.c
+index 7dbeedf7298d..674a390601c0 100644
+--- a/libsa/lastkernelconstructor.c
++++ b/libsa/lastkernelconstructor.c
+@@ -37,4 +37,4 @@ last_kernel_constructor(void)
+ }
+ 
+ __asm__(".globl _last_kernel_symbol");
+-__asm__(".zerofill __LAST, __last, _last_kernel_symbol, 0");
++__asm__(".zerofill __DATA, __lastsec, _last_kernel_symbol, 0");
 diff --git a/makedefs/MakeInc.cmd b/makedefs/MakeInc.cmd
 index bc39e19b3b8e..0a72a2d43908 100644
 --- a/makedefs/MakeInc.cmd
@@ -1868,6 +1913,25 @@ index 5bd6f23dd10c..252d50062da4 100644
  # Link opensource binary library
  ifneq ($(filter T6000 T8101 VMAPPLE T6000 T8101 VMAPPLE,$(CURRENT_MACHINE_CONFIG)),)
  	LDFLAGS_KERNEL_ONLY += -rdynamic -Wl,-force_load,$(KDKROOT)/System/Library/KernelSupport/lib$(CURRENT_MACHINE_CONFIG).os.$(CURRENT_KERNEL_CONFIG).a
+diff --git a/makedefs/MakeInc.kernel b/makedefs/MakeInc.kernel
+index b303c42249c8..8a176ba4566e 100644
+--- a/makedefs/MakeInc.kernel
++++ b/makedefs/MakeInc.kernel
+@@ -185,12 +185,12 @@ ifeq ($(PRE_LTO),1)
+ 		    $(LD) $(LDFLAGS_KERNEL) $(LDFLAGS_KERNEL_ONLY) -filelist nonltolink.filelist $(TARGET)/justlto.o $(LDFLAGS_KERNEL_STRIP_LTO) -o $@ $(LD_KERNEL_LIBS) $(LD_KERNEL_ARCHIVES); \
+ 		fi; \
+ 	else \
+-		$(LD) $(LDFLAGS_KERNEL) $(LDFLAGS_KERNEL_ONLY) -filelist nonltolink.filelist -o $@ $(LD_KERNEL_LIBS) $(LD_KERNEL_ARCHIVES); \
++		$(LD) $(LDFLAGS_KERNEL) $(LDFLAGS_KERNEL_ONLY) -Wl,-rename_segment,__LASTDATA_CONST,__DATA -Wl,-rename_segment,__LAST,__DATA -filelist nonltolink.filelist -o $@ $(LD_KERNEL_LIBS) $(LD_KERNEL_ARCHIVES); \
+ 	fi
+ else
+ 	@$(LOG_LD) "$(@F)"
+ 	$(_v)$(CAT) $(filter %.filelist,$+) < /dev/null > link.filelist
+-	$(_v)$(LD) $(LDFLAGS_KERNEL) $(LDFLAGS_KERNEL_ONLY) -filelist link.filelist version.o $(filter %.o,$+) -o $@ $(LD_KERNEL_LIBS) $(LD_KERNEL_ARCHIVES)
++	$(_v)$(LD) $(LDFLAGS_KERNEL) $(LDFLAGS_KERNEL_ONLY) -Wl,-rename_segment,__LASTDATA_CONST,__DATA -Wl,-rename_segment,__LAST,__DATA -filelist link.filelist version.o $(filter %.o,$+) -o $@ $(LD_KERNEL_LIBS) $(LD_KERNEL_ARCHIVES)
+ endif
+ 
+ # for now, rename LASTDATA_CONST to LAST on static kernel cache builds
 diff --git a/makedefs/MakeInc.top b/makedefs/MakeInc.top
 index 0316792a3f42..b9c195b09cd1 100644
 --- a/makedefs/MakeInc.top
@@ -2041,6 +2105,44 @@ index e26a1d70f470..f91095c98d26 100644
  
  #if APPLE_ARM64_ARCH_FAMILY
  	configure_late_apple_regs();
+diff --git a/osfmk/arm/io_map.c b/osfmk/arm/io_map.c
+index 18ef2f02122f..5acafadc8cf0 100644
+--- a/osfmk/arm/io_map.c
++++ b/osfmk/arm/io_map.c
+@@ -62,7 +62,7 @@
+ 
+ extern vm_offset_t virtual_space_start;     /* Next available kernel VA */
+ 
+-#define IO_MAP_SIZE            (8ul << 20)
++#define IO_MAP_SIZE            (64ul << 20)
+ 
+ __startup_data static struct mach_vm_range io_range;
+ static SECURITY_READ_ONLY_LATE(vm_map_t) io_submap;
+@@ -117,16 +117,19 @@ io_map(
+ 		kasan_notify_address(start + start_offset, size);
+ #endif
+ 	} else {
+-		kma_flags_t kmaflags = KMA_NOFAIL | KMA_PAGEABLE;
++		kma_flags_t kmaflags = KMA_PAGEABLE;
+ 
+ 		if (unmappable) {
+-			kmaflags |= KMA_DATA;
++			kmaflags |= KMA_DATA | KMA_NOFAIL;
++			kmem_alloc(kernel_map, &start, alloc_size, kmaflags, VM_KERN_MEMORY_IOKIT);
+ 		} else {
+ 			kmaflags |= KMA_PERMANENT;
++			if (kmem_alloc(io_submap, &start, alloc_size, kmaflags, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++				kmaflags &= ~KMA_PERMANENT;
++				kmaflags |= KMA_DATA | KMA_NOFAIL;
++				kmem_alloc(kernel_map, &start, alloc_size, kmaflags, VM_KERN_MEMORY_IOKIT);
++			}
+ 		}
+-
+-		kmem_alloc(unmappable ? kernel_map : io_submap,
+-		    &start, alloc_size, kmaflags, VM_KERN_MEMORY_IOKIT);
+ 		pmap_map(start, phys_addr, phys_addr + alloc_size, prot, flags);
+ 	}
+ 	return start + start_offset;
 diff --git a/osfmk/arm/model_dep.c b/osfmk/arm/model_dep.c
 index 39daaf8db949..64ceb1a5f201 100644
 --- a/osfmk/arm/model_dep.c

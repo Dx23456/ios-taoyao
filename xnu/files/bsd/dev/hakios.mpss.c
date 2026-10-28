@@ -1479,7 +1479,9 @@ step_header(void)
 		if (!dsp_shutdown("it may be running")) {
 			return false;
 		}
-		if (!stopped_by_its_word && !option("modem_again")) {
+		char board_name[32] = {0};
+		bool is_taoyao = PE_parse_boot_argn("board", board_name, sizeof(board_name)) && strcmp(board_name, "taoyao") == 0;
+		if (!stopped_by_its_word && !option("modem_again") && !is_taoyao) {
 			printf("mpss: %u: THE MODEM IS NOT STARTED AGAIN: it was shut down without having acknowledged a stop, and "
 			    "with the Wi-Fi's DSP a start after that reset the phone (modem_again=1 to try all the same)\n", step);
 			return false;

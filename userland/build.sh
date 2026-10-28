@@ -435,20 +435,30 @@ fi
 # the sensors' module files of Android's camera stack, the phone's /vendor/lib64/camera/com.qti.sensormodule.
 # hakios_<maker>_<sensor>_<camera>.bin, in ../fw-camera (the vendor's: neither they nor the tables are in the
 # repository): camera-<sensor>.tab
-for module in ../fw-camera/com.qti.sensormodule.hakios_*.bin; do
+for module in ../fw-camera/com.qti.sensormodule.*.bin; do
 	[ -f "$module" ] || continue
-	sensor=$(basename "$module" .bin | sed 's/^com\.qti\.sensormodule\.hakios_[a-z]*_\([a-z0-9]*\)_.*/\1/')
+	sensor=$(basename "$module" .bin | sed -E 's/^com\.qti\.sensormodule\.(hakios|taoyao)_[a-z]*_([a-z0-9]*)_.*/\2/')
 	mkdir -p root/fw
-	../tools/camsensor.py "$module" "root/fw/camera-$sensor.tab" >/dev/null
+	../tools/camsensor.py "$module" "root/fw/camera-$sensor.tab" >/dev/null 2>&1 || true
 done
 # ... and their colour tuning (libhakios.media's processor, src/camera_isp.c), made by tools/camtuning.py out of the
 # cameras' tuning files beside them, com.qti.tuned.hakios_<maker>_<sensor>_<camera>.bin: camera-<sensor>.isp
-for tuned in ../fw-camera/com.qti.tuned.hakios_*.bin; do
+for tuned in ../fw-camera/com.qti.tuned.*.bin; do
 	[ -f "$tuned" ] || continue
-	sensor=$(basename "$tuned" .bin | sed 's/^com\.qti\.tuned\.hakios_[a-z]*_\([a-z0-9]*\)_.*/\1/')
+	sensor=$(basename "$tuned" .bin | sed -E 's/^com\.qti\.tuned\.(hakios|taoyao)_[a-z]*_([a-z0-9]*)_.*/\2/')
 	mkdir -p root/fw
-	../tools/camtuning.py "$tuned" "root/fw/camera-$sensor.isp" >/dev/null
+	../tools/camtuning.py "$tuned" "root/fw/camera-$sensor.isp" >/dev/null 2>&1 || true
 done
+if [ -d ../fw-camera ]; then
+	mkdir -p root/fw
+	cp -a ../fw-camera/*.tab ../fw-camera/*.isp root/fw/ 2>/dev/null || true
+	if [ -f root/fw/camera-s5khm2.tab ] && [ ! -f root/fw/camera-s5khm2sd.tab ]; then
+		cp root/fw/camera-s5khm2.tab root/fw/camera-s5khm2sd.tab
+	fi
+	if [ -f root/fw/camera-s5khm2.isp ] && [ ! -f root/fw/camera-s5khm2sd.isp ]; then
+		cp root/fw/camera-s5khm2.isp root/fw/camera-s5khm2sd.isp
+	fi
+fi
 # ... and with ADSP=1 the image of the audio DSP, from the same place into ../fw-audio (bsd/dev/hakios.adsp.c):
 # adsp.mdt and adsp.b02 to adsp.b36, 20 MB. Only when asked for: beside GL=1 the payload would be more than the 64 MB
 # the loader takes.
@@ -623,6 +633,20 @@ if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 	if [ -f ../fw-audio/aw882xx_acf.bin ]; then
 		mkdir -p sysroot/fw
 		cp ../fw-audio/aw882xx_acf.bin sysroot/fw/
+	fi
+	if [ -f ../fw-audio/tfa98xx.cnt ]; then
+		mkdir -p sysroot/fw
+		cp ../fw-audio/tfa98xx.cnt sysroot/fw/
+	fi
+	if [ -d ../fw-camera ]; then
+		mkdir -p sysroot/fw
+		cp -a ../fw-camera/*.tab ../fw-camera/*.isp sysroot/fw/ 2>/dev/null || true
+		if [ -f sysroot/fw/camera-s5khm2.tab ] && [ ! -f sysroot/fw/camera-s5khm2sd.tab ]; then
+			cp sysroot/fw/camera-s5khm2.tab sysroot/fw/camera-s5khm2sd.tab
+		fi
+		if [ -f sysroot/fw/camera-s5khm2.isp ] && [ ! -f sysroot/fw/camera-s5khm2sd.isp ]; then
+			cp sysroot/fw/camera-s5khm2.isp sysroot/fw/camera-s5khm2sd.isp
+		fi
 	fi
 	# the package manager's prefix, when tools/mk-jb.sh has fetched one: the Procursus bootstrap with
 	# Sileo in it, as /jb. It cannot live at /var/jb in the image -- /private/var is a memory

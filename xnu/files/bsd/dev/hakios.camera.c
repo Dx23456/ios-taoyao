@@ -1108,6 +1108,9 @@ ctab_load(void)
 	const uint8_t *at, *end;
 
 	ctab = (const struct ctab_head *)hakios_wifi_file(hw->tab, &ctab_size);
+	if (ctab == NULL && strcmp(hw->tab, "camera-s5khm2sd.tab") == 0) {
+		ctab = (const struct ctab_head *)hakios_wifi_file("camera-s5khm2.tab", &ctab_size);
+	}
 	if (ctab == NULL || ctab_size < sizeof(*ctab) || memcmp(ctab->magic, "RWCTAB02", 8) != 0 || ctab->modes == 0 ||
 	    ctab->modes > 16) {
 		say("camera: no %s (RWCTAB02) in fw/ of the small image (made from fw-camera/ when it is built)\n", hw->tab);
@@ -2087,7 +2090,7 @@ frames_alloc(uint32_t width, uint32_t height, uint32_t stride, uint32_t source)
 	if (keep != 0 && keep_bytes >= frames_bytes) {
 		frames = keep;                  /* (the piece taken at boot: hakios_camera_init()) */
 		bzero((void *)frames, CAM_HEADER_BYTES);
-	} else if (kmem_alloc_contig(kernel_map, &frames, frames_bytes, PAGE_MASK, 0, 0, KMA_KOBJECT | KMA_ZERO | KMA_DATA,
+	} else if (kmem_alloc_contig(kernel_map, &frames, frames_bytes, PAGE_MASK, 0, 0, KMA_DATA | KMA_ZERO,
 	    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
 		say("camera: no memory for %u frames (%llu KB)\n", CAM_FRAMES, frames_bytes >> 10);
 		return false;
@@ -2182,7 +2185,7 @@ smmu_up(void)
 		give_up("no place in the SMMU");
 		return false;
 	}
-	if (kmem_alloc(kernel_map, &page_tables, (2 + thirds) * 4096, KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) !=
+	if (kmem_alloc(kernel_map, &page_tables, (2 + thirds) * 4096, KMA_DATA | KMA_ZERO, VM_KERN_MEMORY_IOKIT) !=
 	    KERN_SUCCESS) {
 		lck_mtx_unlock(&hakios_smmu_lock);
 		give_up("no memory for page tables");
@@ -3381,7 +3384,7 @@ ring_alloc(uint32_t frame_bytes)
 	ring_frame_bytes = frame_bytes;
 	ring_place_bytes = round_page(frame_bytes) + PLACE_SPARE;
 	ring_bytes = RING * ring_place_bytes;
-	if (kmem_alloc(kernel_map, &ring, ring_bytes, KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+	if (kmem_alloc(kernel_map, &ring, ring_bytes, KMA_DATA | KMA_ZERO, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
 		say("camera: no memory for %u frames (%llu KB)\n", RING, ring_bytes >> 10);
 		ring = 0;
 		return false;
@@ -4179,12 +4182,12 @@ camera_thread(__unused void *parameter, __unused wait_result_t result)
 		thread_terminate(current_thread());
 	}
 	wait_ms(secs * 1000);           /* (the system up first: nothing else is on these buses then) */
-	tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
-	gcc = ml_io_map(GCC_PHYS, 0x30000);
-	camcc = ml_io_map(CAMCC_PHYS, CAMCC_SIZE);
-	arb_core = ml_io_map(ARB_CORE_PHYS, ARB_CORE_SIZE);
-	arb_cnfg = ml_io_map(ARB_CNFG_PHYS, ARB_CNFG_SIZE);
-	arb_observer = ml_io_map(ARB_OBSERVER_PHYS, ARB_OBSERVER_SIZE);
+	tlmm = ml_io_map_unmappable(TLMM_PHYS, TLMM_SIZE, VM_WIMG_IO);
+	gcc = ml_io_map_unmappable(GCC_PHYS, 0x30000, VM_WIMG_IO);
+	camcc = ml_io_map_unmappable(CAMCC_PHYS, CAMCC_SIZE, VM_WIMG_IO);
+	arb_core = ml_io_map_unmappable(ARB_CORE_PHYS, ARB_CORE_SIZE, VM_WIMG_IO);
+	arb_cnfg = ml_io_map_unmappable(ARB_CNFG_PHYS, ARB_CNFG_SIZE, VM_WIMG_IO);
+	arb_observer = ml_io_map_unmappable(ARB_OBSERVER_PHYS, ARB_OBSERVER_SIZE, VM_WIMG_IO);
 	say("camera: cam=%u: the %s camera%s\n", level, hw->name, level == 5 ? ": its frames for iOS" :
 	    level == 4 ? ": its frames through its CSIPHY and RDI 0 into memory" :
 	    level == 3 ? ": the CSID's test pattern through RDI 0 into memory" :
@@ -4237,7 +4240,7 @@ hakios_camera_init(void)
 
 		(void)PE_parse_boot_argn("cam_keep_mb", &keep_mb, sizeof(keep_mb));
 		keep_bytes = (uint64_t)(keep_mb > 64 ? 64 : keep_mb) << 20;
-		if (keep_bytes != 0 && kmem_alloc_contig(kernel_map, &keep, keep_bytes, PAGE_MASK, 0, 0, KMA_KOBJECT | KMA_ZERO | KMA_DATA,
+		if (keep_bytes != 0 && kmem_alloc_contig(kernel_map, &keep, keep_bytes, PAGE_MASK, 0, 0, KMA_DATA | KMA_ZERO,
 		    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
 			printf("camera: no memory in one piece for a picture for the host (%u MB)\n", keep_mb);
 			keep = 0;
