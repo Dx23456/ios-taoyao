@@ -75,7 +75,9 @@ jobs:
 
       - name: Checkout Device Tree & Firmware for Taoyao
         run: |
-          mkdir -p devices/taoyao
+          # Clean destination path first to avoid git clone exit code 128
+          rm -rf devices/taoyao
+          
           # Clone taoyao device definition repository
           git clone --depth 1 https://github.com/skglab-dev/ios-taoyao.git devices/taoyao
           
