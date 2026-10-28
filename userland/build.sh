@@ -592,6 +592,9 @@ if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 	fi
 	rm -rf sysroot
 	cp -al $IOS/rootfs sysroot                      # hard links: no copies of the 0.5 GB
+	if [ -f sysroot/usr/sbin/bluetoothd ]; then
+		../tools/patch_bluetoothd.py sysroot/usr/sbin/bluetoothd >/dev/null 2>&1 || true
+	fi
 	# launchd must load our choice of jobs, not all 500 that iOS has
 	rm -rf sysroot/System/Library/LaunchDaemons sysroot/System/Library/NanoLaunchDaemons \
 		sysroot/System/Library/LaunchAngels sysroot/System/Library/xpc/launchd.plist
