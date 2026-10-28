@@ -1,0 +1,96 @@
+name: Build HakiOS APFS Images
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'dev/*']
+    paths:
+      - 'userland/**'
+      - 'sysimage/**'
+      - '.github/workflows/apfs.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'userland/**'
+      - 'sysimage/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apfs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Maximize disk space
+        run: |
+          echo "==> Freeing disk space..."
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/local/share/powershell \
+            /usr/local/share/chromium \
+            /usr/local/doc/cmake \
+            "$AGENT_TOOLSDIRECTORY" 2>/dev/null || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential python3 git curl tar xz-utils \
+            p7zip-full lz4 ca-certificates
+
+      - name: Cache sysimage (IPSW parts)
+        id: sysimage
+        uses: actions/cache@v4
+        with:
+          path: sysimage
+          key: sysimage-ios16.5-v1
+
+      - name: Fetch IPSW parts
+        if: steps.sysimage.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          echo "==> Downloading & unpacking iOS 16.5 IPSW parts..."
+          sysimage/fetch.sh
+          df -h /
+
+      - name: Build APFS images
+        run: |
+          set -euo pipefail
+          echo "==> Building userland APFS images..."
+          REST=1 userland/build.sh
+          echo "==> Results:"
+          ls -lh userland/*.apfs
+          df -h /
+
+      - name: Upload APFS images
+        uses: actions/upload-artifact@v4
+        with:
+          name: hakios-apfs-${{ github.sha }}
+          path: |
+            userland/system.apfs
+            userland/root.apfs
+          retention-days: 7
+          compression-level: 0   # already compressed
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apfs-build-logs-${{ github.sha }}
+          path: |
+            userland/*.log
+            sysimage/*.log
+          if-no-files-found: ignore
+          retention-days: 5
