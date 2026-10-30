@@ -13,6 +13,7 @@ on:
       - 'userland/**'
       - 'xl'
       - 'tools/build-taoyao-image.sh'
+      - 'tools/audit-taoyao-artifacts.py'
       - 'mkxnuimg.py'
       - 'devices/taoyao/prebuilt/**'
       - '.github/workflows/build-taoyao-sm7325.yml'
