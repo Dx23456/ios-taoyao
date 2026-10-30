@@ -88,11 +88,12 @@ jobs:
           }
           tar -xOf "$archive" "$member" > "$RUNNER_TEMP/taoyao/xbl.img"
           test -s "$RUNNER_TEMP/taoyao/xbl.img"
-          echo "XBL_SHA256=$(sha256sum "$RUNNER_TEMP/taoyao/xbl.img" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          xbl_sha256="$(sha256sum "$RUNNER_TEMP/taoyao/xbl.img" | cut -d' ' -f1)"
+          echo "XBL_SHA256=$xbl_sha256" >> "$GITHUB_ENV"
           rm -f "$archive"
           echo "Extracted xbl.img from the verified official Xiaomi ROM."
           echo "ROM SHA-256: $ROM_SHA256"
-          echo "XBL SHA-256: $XBL_SHA256"
+          echo "XBL SHA-256: $xbl_sha256"
 
       - name: Apply pinned Mu-Silicium port
         run: |
