@@ -2527,40 +2527,82 @@ static int
 parse_payload(struct payload_info *pi, int verbose)
 {
 	struct payload_header *ph = (struct payload_header *)PAYLOAD_BASE;
+	const uint8_t *p, *pend;
+	int terminated = 0;
 
 	memset(pi, 0, sizeof(*pi));
 	pi->cmdline = "";
-	if (ph->magic != PAYLOAD_MAGIC) {
-		print("no payload at %x (magic %x)\n", PAYLOAD_BASE, (uint64_t)ph->magic);
+	if (ph->magic != PAYLOAD_MAGIC || ph->size > PAYLOAD_MAX_SIZE - sizeof(*ph)) {
+		print("invalid payload header/size at %x (magic %x size %x)\n",
+		    PAYLOAD_BASE, (uint64_t)ph->magic, (uint64_t)ph->size);
 		return 0;
 	}
-	const uint8_t *p = (const uint8_t *)(ph + 1), *pend = p + ph->size;
-	while (p + sizeof(struct payload_entry) <= pend) {
+
+	p = (const uint8_t *)(ph + 1);
+	pend = p + ph->size;
+	while ((uint64_t)(pend - p) >= sizeof(struct payload_entry)) {
 		const struct payload_entry *e = (const struct payload_entry *)p;
-		const char *text = (const char *)(p + sizeof(*e));
+		const uint8_t *data = p + sizeof(*e);
+		uint64_t remaining = (uint64_t)(pend - data);
+		uint64_t aligned_size = ((uint64_t)e->size + 15ULL) & ~15ULL;
+		char name[17];
+		const char *text = (const char *)data;
+		int text_terminated = 0;
+
 		if (e->name[0] == 0) {
+			terminated = 1;
 			break;
 		}
+		if ((uint64_t)e->size > remaining || aligned_size > remaining) {
+			print("payload entry exceeds container bounds (size %x remaining %x)\n",
+			    (uint64_t)e->size, remaining);
+			return 0;
+		}
+
+		memcpy(name, e->name, 16);
+		name[16] = 0;
 		if (verbose) {
-			print("payload entry '%s' size %x\n", e->name, (uint64_t)e->size);
+			print("payload entry '%s' size %x\n", name, (uint64_t)e->size);
 		}
-		if (str_eq(e->name, "ramdisk")) {
-			pi->ramdisk = p + sizeof(*e);             /* becomes /dev/md0, the root device */
+
+		if (str_eq(name, "ramdisk")) {
+			pi->ramdisk = data;
 			pi->ramdisk_size = e->size;
-		} else if (str_eq(e->name, "kernel")) {
-			pi->kernel = p + sizeof(*e);
-		} else if (str_eq(e->name, "cmdline")) {
-			pi->cmdline = text;
-		} else if (str_eq(e->name, "physbase")) {
-			pi->forced_base = parse_number(text, 16); /* testing aid; must be free RAM */
-		} else if (str_eq(e->name, "rdres")) {
-			pi->resident_rd = parse_number(text, 16); /* e.g. loaded there by QEMU; see RESIDENT_RD_OFFSET */
-		} else if (str_eq(e->name, "checkpoint")) {
-			pi->checkpoint = parse_number(text, 10);  /* where the kernel should stop and come back */
-		} else if (str_eq(e->name, "usb")) {
-			pi->usb_mode = 1;                         /* stay in the loader and take commands over USB */
+		} else if (str_eq(name, "kernel")) {
+			if (e->size < sizeof(struct mach_header_64)) {
+				print("payload kernel entry is too small\n");
+				return 0;
+			}
+			pi->kernel = data;
+		} else if (str_eq(name, "cmdline") || str_eq(name, "physbase") ||
+		    str_eq(name, "rdres") || str_eq(name, "checkpoint")) {
+			for (uint32_t i = 0; i < e->size; i++) {
+				if (data[i] == 0) {
+					text_terminated = 1;
+					break;
+				}
+			}
+			if (!text_terminated) {
+				print("payload text entry '%s' is not NUL terminated\n", name);
+				return 0;
+			}
+			if (str_eq(name, "cmdline")) {
+				pi->cmdline = text;
+			} else if (str_eq(name, "physbase")) {
+				pi->forced_base = parse_number(text, 16);
+			} else if (str_eq(name, "rdres")) {
+				pi->resident_rd = parse_number(text, 16);
+			} else {
+				pi->checkpoint = parse_number(text, 10);
+			}
+		} else if (str_eq(name, "usb")) {
+			pi->usb_mode = 1;
 		}
-		p += sizeof(*e) + ((e->size + 15) & ~15u);
+		p = data + aligned_size;
+	}
+	if (!terminated) {
+		print("payload has no complete terminator entry\n");
+		return 0;
 	}
 	return 1;
 }
@@ -2687,12 +2729,21 @@ choose_window(const struct payload_info *pi)
 		print("GetMemoryMap failed\n");
 		return 0;
 	}
+	if (desc_size < sizeof(efi_memory_descriptor) || desc_size == 0 ||
+	    map_size > sizeof(map_buf) || map_size % desc_size != 0) {
+		print("invalid UEFI memory map descriptor layout\n");
+		return 0;
+	}
 	for (uint64_t off = 0; off < map_size; off += desc_size) {
 		efi_memory_descriptor *d = (efi_memory_descriptor *)(map_buf + off);
-		if (d->type != EfiConventionalMemory) {
+		if (d->type != EfiConventionalMemory || d->pages > (~0ULL >> 12)) {
 			continue;
 		}
-		uint64_t lo = d->phys_start, hi = d->phys_start + (d->pages << 12);
+		uint64_t bytes = d->pages << 12;
+		if (d->phys_start > ~0ULL - bytes) {
+			continue;
+		}
+		uint64_t lo = d->phys_start, hi = d->phys_start + bytes;
 		/* the payload sits in RAM that UEFI may consider free: stay clear of it */
 		if (lo < pay_hi && hi > pay_lo) {
 			if (pay_lo - lo > hi - pay_hi && pay_lo > lo) {
@@ -2700,6 +2751,9 @@ choose_window(const struct payload_info *pi)
 			} else {
 				lo = pay_hi;
 			}
+		}
+		if (lo > ~0ULL - (BASE_ALIGN - 1)) {
+			continue;
 		}
 		lo = (lo + BASE_ALIGN - 1) & ~(BASE_ALIGN - 1);
 		hi &= ~(BASE_ALIGN - 1);
@@ -2710,8 +2764,12 @@ choose_window(const struct payload_info *pi)
 	}
 	print("largest free block %x size %x\n", best_base, best_size);
 	if (pi->forced_base != 0) {
-		best_base = pi->forced_base;
-		best_size = MAX_MEM_SIZE;
+		print("physbase override rejected: explicit physical placement is disabled until independently validated\n");
+		return 0;
+	}
+	if (best_size == 0) {
+		print("no suitable free RAM window found\n");
+		return 0;
 	}
 	if (best_size > MAX_MEM_SIZE) {
 		best_size = MAX_MEM_SIZE;
@@ -3951,24 +4009,30 @@ efi_main(efi_handle image, efi_system_table *st)
 	print("CurrentEL=%x MIDR=%x MMFR0=%x CNTFRQ=%d image=%x\n", READ_SYSREG(CurrentEL) >> 2, READ_SYSREG(MIDR_EL1),
 	    READ_SYSREG(ID_AA64MMFR0_EL1), READ_SYSREG(CNTFRQ_EL0), (uint64_t)(uintptr_t)&__ImageBase);
 
+	/*
+	 * Framebuffer address is not a hardware identity. taoyao reports
+	 * 0xE1000000 too; do not infer the unrelated Redwood GIC/PSCI/CPU profile.
+	 * Only the low-address QEMU reference profile is currently enabled.
+	 */
 	PLAT = &platform_qemu_virt;
-	if (EFI_ERROR(BS->locate_protocol(&gop_guid, NULL, (void **)&GOP)) || GOP->mode == NULL ||
-	    GOP->mode->info == NULL || GOP->mode->fb_base == 0) {
-		GOP = NULL;                     /* no display (QEMU without -device ramfb) */
-	} else {
-		SCREEN.base = GOP->mode->fb_base;
-		SCREEN.width = GOP->mode->info->width;
-		SCREEN.height = GOP->mode->info->height;
-		SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
-		if (SCREEN.base == 0xE1000000ULL ||
-		    ((READ_SYSREG(MIDR_EL1) & 0xff000000ULL) != 0 && SCREEN.base >= 0x80000000ULL)) {
-			PLAT = &platform_redwood;
-		} else {
-			ramfb_phone_screen();
-		}
-		print("display %d x %d at %x\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
+	if (EFI_ERROR(BS->locate_protocol(&gop_guid, NULL, (void **)&GOP)) ||
+	    GOP == NULL || GOP->mode == NULL || GOP->mode->info == NULL ||
+	    GOP->mode->fb_base == 0) {
+		print("no usable GOP: refusing to guess a platform profile\n");
+		reboot();
 	}
-	print("platform %s\n", PLAT->name);
+	SCREEN.base = GOP->mode->fb_base;
+	SCREEN.width = GOP->mode->info->width;
+	SCREEN.height = GOP->mode->info->height;
+	SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
+	if (SCREEN.base >= 0x80000000ULL) {
+		print("unsupported physical platform fb=%x; no validated taoyao/SM7325 profile; refusing kernel start\n",
+		    SCREEN.base);
+		reboot();
+	}
+	ramfb_phone_screen();
+	print("display %d x %d at %x\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
+	print("platform %s (QEMU reference only)\n", PLAT->name);
 
 	install_exception_hook();
 	wdt_arm();
