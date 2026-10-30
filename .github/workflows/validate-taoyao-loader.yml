@@ -8,6 +8,7 @@ on:
       - 'xnuloader/**'
       - 'tools/build-taoyao-image.sh'
       - 'tools/build-ios16.5-userland.sh'
+      - 'qemu/run-taoyao-sm7325.sh'
       - 'mkxnuimg.py'
       - '.github/workflows/validate-taoyao-loader.yml'
   pull_request:
@@ -16,6 +17,7 @@ on:
       - 'xnuloader/**'
       - 'tools/build-taoyao-image.sh'
       - 'tools/build-ios16.5-userland.sh'
+      - 'qemu/run-taoyao-sm7325.sh'
       - 'mkxnuimg.py'
       - '.github/workflows/validate-taoyao-loader.yml'
 
@@ -34,7 +36,7 @@ jobs:
       - name: Validate scripts
         run: |
           set -euo pipefail
-          bash -n xnuloader/build.sh tools/build-taoyao-image.sh tools/build-ios16.5-userland.sh
+          bash -n xnuloader/build.sh tools/build-taoyao-image.sh tools/build-ios16.5-userland.sh qemu/run-taoyao-sm7325.sh
           python3 -m py_compile xnuloader/mkpayload.py xnuloader/mkidentity.py mkxnuimg.py
       - name: Build freestanding ARM64 UEFI loader
         run: |
