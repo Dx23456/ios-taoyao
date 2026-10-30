@@ -1,11 +1,22 @@
 name: Build encrypted iOS 16.5 userland images
 
 on:
+  push:
+    branches:
+      - work/taoyao-xnu-platform-preflight
+    paths:
+      - ".github/workflows/build-ios165-userland-encrypted.yml"
+      - "tools/**"
+      - "userland/**"
+      - "sysimage/**"
+      - "xnuloader/**"
+      - "prebuilt/**"
   workflow_dispatch:
     inputs:
       age_recipient:
         description: "Your age1... public encryption recipient (never enter your private key)"
-        required: true
+        required: false
+        default: "age1mmz2kaz4zp8hr9cud5us7ads9pq7ed88y068pd2nqrhe4sz3vueqg8gvqa"
         type: string
 
 permissions:
@@ -20,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
-      AGE_RECIPIENT: ${{ inputs.age_recipient }}
+      AGE_RECIPIENT: ${{ inputs.age_recipient || 'age1mmz2kaz4zp8hr9cud5us7ads9pq7ed88y068pd2nqrhe4sz3vueqg8gvqa' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
