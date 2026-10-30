@@ -48,6 +48,7 @@ cd "$(dirname "$(readlink -f "$0")")" || exit 1
 [ "$(uname)" = Darwin ] && PATH=$PWD/tools/macos-bin:$PWD/tools/macos-bin/platform-tools:$PATH
 # the kernel and the loader built here, or else the ones that come with the repository
 K=${K:-xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_SM7325/mach.development.sm7325}
+[ -f "$K" ] || K=prebuilt/mach.development.sm7325
 L=${L:-xnuloader/loader.efi}
 mkdir -p logs
 # There is one phone, whichever working copy (tools/new-workspace.sh) talks to it: the locks are
