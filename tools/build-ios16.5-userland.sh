@@ -25,7 +25,7 @@ cd "$ROOT"
 die() { echo "build-ios16.5-userland: ERROR: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing command '$1'"; }
 
-for cmd in python3 cc git curl sha256sum df awk grep sed head; do need "$cmd"; done
+for cmd in python3 cc git curl make sha256sum df awk grep sed head; do need "$cmd"; done
 [[ -s prebuilt/userland/stage0 && -s prebuilt/userland/init ]] || \
   die "prebuilt/userland stage0/init binaries are missing"
 
