@@ -1,4 +1,4 @@
-name: Build HakiOS (XNU + xnuloader)
+name: Build HakiOS reference kernel (BCM2837 smoke test only)
 
 # Based on the actual build system of github.com/Dx23456/ios-taoyao:
 #   xnu/apply.sh        Apple's xnu-8796.121.2 (iOS 16.5) + hakios.patch -> xnu-src/
@@ -22,6 +22,8 @@ on:
           - stock       # from the iOS 16.5 IPSW device tree (34 KB, Apple's public CDN)
           - placeholder # Apple-free identity; builds/boots, but not for the iOS user space
   push:
+    # This is the BCM2837 reference-only build. Do not run it for taoyao
+    # work branches; the SM7325 workflow is the device-specific build.
     branches:
       - main
       - dev/*
@@ -40,6 +42,7 @@ concurrency:
 env:
   THEOS: ${{ github.workspace }}/theos
   XNU_TAG: xnu-8796.121.2
+  MACHINE: BCM2837
   KERNEL_BIN: xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
 
 jobs:
@@ -152,7 +155,8 @@ jobs:
 
           echo "==> Building the kernel..."
           # -k is required by upstream (check_all_exports always fails after link)
-          ./xnu-build.sh -j"$(nproc)" -k
+          MACHINE="$MACHINE" ./xnu-build.sh -j"$(nproc)" -k
+          echo "This artifact is a BCM2837 reference build; it is NOT a taoyao/SM7325 kernel."
 
           test -f "$KERNEL_BIN"
           ls -la "$KERNEL_BIN"
@@ -200,11 +204,13 @@ jobs:
       - name: Package Artifacts
         run: |
           mkdir -p out
-          cp "$KERNEL_BIN" out/mach.development.bcm2837
+          cp "$KERNEL_BIN" out/mach.development.bcm2837.reference-only
           cp xnuloader/loader.efi out/
           cp userland/hello out/
           {
-            echo "HakiOS CI build"
+            echo "HakiOS CI reference build (BCM2837 only; not taoyao)"
+            echo "machine: $MACHINE"
+            echo "native_taoyao: NO"
             echo "repo: ${{ github.repository }}"
             echo "commit: ${{ github.sha }}"
             echo "identity: ${{ inputs.identity || 'stock' }}"
@@ -217,6 +223,6 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hakios-xnu-${{ env.XNU_TAG }}-${{ github.sha }}
+          name: hakios-reference-bcm2837-${{ env.XNU_TAG }}-${{ github.sha }}
           path: out/
           retention-days: 14

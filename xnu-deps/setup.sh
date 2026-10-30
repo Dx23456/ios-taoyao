@@ -198,6 +198,8 @@ stage1() {
 # the kernel). They are compiled against the headers the kernel build exports, so that step
 # of the kernel build comes first.
 stage2() {
+	[ -n "${MACHINE:-}" ] || die "MACHINE must be set explicitly before building board-specific kernel libraries"
+	local BOARD_CONFIG="-DARM64_BOARD_CONFIG_${MACHINE}"
 	[ -f "$XNU_SRC/makedefs/MakeInc.def" ] || die "no kernel tree in $XNU_SRC (xnu/apply.sh makes it)"
 	[ -x host/bin/migcom ] && [ -d "$XNU_SDK_PATH/usr/local/lib/kernel" ] || die "stage 1 has not been done"
 	local lib=$XNU_SDK_PATH/usr/local/lib/kernel hdrs=$XNU_SRC/BUILD/obj/EXPORT_HDRS file
@@ -206,21 +208,31 @@ stage2() {
 	for file in loader.h nlist.h fat.h; do
 		[ -f hostinc/mach-o/$file ] || cp "$XNU_SRC/EXTERNAL_HEADERS/mach-o/$file" hostinc/mach-o/
 	done
-	if [ -n "$REBUILD_LIBS" ]; then rm -f $lib/libfirehose_kernel.a $lib/libpthread_kext.a; fi
-	if [ -f $lib/libfirehose_kernel.a ] && [ -f $lib/libpthread_kext.a ]; then
-		log "stage 2: nothing to do"
+	local board_stamp=$lib/.hakios-board-config
+	if [ -n "$REBUILD_LIBS" ] || [ "$(cat "$board_stamp" 2>/dev/null)" != "$MACHINE" ]; then
+		rm -f "$lib/libfirehose_kernel.a" "$lib/libpthread_kext.a"
+	fi
+	if [ -f "$lib/libfirehose_kernel.a" ] && [ -f "$lib/libpthread_kext.a" ] &&
+	   [ "$(cat "$board_stamp" 2>/dev/null)" = "$MACHINE" ]; then
+		log "stage 2: libraries already built for $MACHINE"
 		return 0
 	fi
 	log "exporting the kernel's headers (xnu-build.sh exporthdrs)"
 	"$DARWIN_REDWOOD/xnu-build.sh" -j$JOBS exporthdrs > exporthdrs.log 2>&1 && [ -d "$hdrs/osfmk" ] ||
 		die "the kernel headers were not exported, see xnu-deps/exporthdrs.log"
+	# XNU's export list does not know about this out-of-tree board header. Make it
+	# available to all subsequent kernel-library and kernel compilation steps.
+	if [ -f "$XNU_SRC/pexpert/pexpert/arm64/SM7325.h" ]; then
+		mkdir -p "$hdrs/pexpert/pexpert/arm64"
+		cp "$XNU_SRC/pexpert/pexpert/arm64/SM7325.h" "$hdrs/pexpert/pexpert/arm64/SM7325.h"
+	fi
 	if [ ! -f $lib/libfirehose_kernel.a ]; then
 		log "building libfirehose_kernel.a"
 		mkdir -p build/firehose
 		xnu-clang -arch arm64 -c -Os -mkernel -nostdinc -fno-builtin \
 			-DKERNEL=1 -DKERNEL_PRIVATE=1 -DXNU_KERNEL_PRIVATE=0 -DPRIVATE=1 -D__DARWIN_64_BIT_INO_T=1 \
 			-DDISPATCH_USE_DTRACE=0 -DOS_ATOMIC_CONFIG_MEMORY_ORDER_DEPENDENCY=1 \
-			-DOS_ATOMIC_CONFIG_STARVATION_FREE_ONLY=0 -DOS_FIREHOSE_SPI=1 -DARM64_BOARD_CONFIG_BCM2837 \
+			-DOS_ATOMIC_CONFIG_STARVATION_FREE_ONLY=0 -DOS_FIREHOSE_SPI=1 $BOARD_CONFIG \
 			-Ilibdispatch -Ilibdispatch/src -Ilibdispatch/src/firehose \
 			-I$hdrs/osfmk -I$hdrs/bsd -I$hdrs/libkern -I$hdrs/pexpert -I$hdrs/iokit -I$hdrs/security \
 			-I$XNU_SRC/libkern/firehose -I$hdrs/libkern/os -I$XNU_SRC/EXTERNAL_HEADERS \
@@ -228,11 +240,12 @@ stage2() {
 			-o build/firehose/firehose_buffer.o libdispatch/src/firehose/firehose_buffer.c
 		libtool -static -o $lib/libfirehose_kernel.a build/firehose/firehose_buffer.o
 	fi
-	if [ ! -f $lib/libpthread_kext.a ]; then
+	if [ ! -f "$lib/libpthread_kext.a" ]; then
 		log "building libpthread_kext.a"
 		build/pthread/build.sh
 	fi
-	log "stage 2 done; now: ./xnu-build.sh -j$JOBS -k"
+	printf '%s\n' "$MACHINE" > "$board_stamp"
+	log "stage 2 done for $MACHINE; now: MACHINE=$MACHINE ./xnu-build.sh -j$JOBS -k"
 }
 
 case "$1" in

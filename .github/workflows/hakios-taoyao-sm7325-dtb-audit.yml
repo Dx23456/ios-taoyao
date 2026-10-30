@@ -1,0 +1,39 @@
+name: SM7325 DTB auditor tests and repository snapshot audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'work/**']
+    paths:
+      - 'devices/taoyao/xnu/**'
+      - '.github/workflows/hakios-taoyao-sm7325-dtb-audit.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'devices/taoyao/xnu/**'
+      - '.github/workflows/hakios-taoyao-sm7325-dtb-audit.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit-self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install DTB compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y device-tree-compiler
+      - name: Validate audit and collector syntax
+        run: |
+          python3 -m py_compile devices/taoyao/xnu/audit-sm7325-dtb.py
+          sh -n devices/taoyao/xnu/collect-live-dtb.sh
+      - name: Test auditor against synthetic reference fixture
+        run: |
+          python3 devices/taoyao/xnu/audit-sm7325-dtb.py \
+            devices/taoyao/xnu/tests/fixtures/sm7325-reference.dts
+      - name: Audit committed taoyao DTB snapshot
+        run: |
+          python3 devices/taoyao/xnu/audit-sm7325-dtb.py \
+            devices/taoyao/prebuilt/device-tree.dtb

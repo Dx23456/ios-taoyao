@@ -11,10 +11,32 @@ Nothing is flashed. The loader goes into RAM through `fastboot boot`, the system
 the length of a session, and a reboot brings the phone back to its own Android. This is a research
 bench, not a ROM.
 
-The first phone is the **Xiaomi 12 Lite** (`taoyao`, Snapdragon 778G). The kernel knows nothing
-about it in advance: every address, interrupt, power rail and firmware comes from the phone's own
-device tree and its own Android, so a port to another Qualcomm phone is a new directory under
-`devices/`, not a rewrite.
+The established end-to-end phone target in this repository is the **POCO X5 Pro 5G**
+(`redwood`). This branch adds an early, experimental target for the **Xiaomi 12 Lite**
+(`taoyao`, Snapdragon 778G / SM7325). The existing redwood driver and feature status must
+not be assumed to work on taoyao: its UEFI integration, device tree, memory handoff,
+interrupts, timers, firmware and XNU platform support require separate validation.
+
+## taoyao port status — this branch
+
+**The taoyao port is an experimental bring-up scaffold, not a bootable iOS build.**
+The current CI target compiles an ARM64 XNU kernel for SM7325, builds an AArch64 UEFI
+loader, and packages a USB-resident loader image plus a minimal test root APFS image.
+The current package does not contain the iOS 16.5 system APFS image, uses a placeholder
+device identity, and has not been boot-tested on the Xiaomi 12 Lite.
+
+The build is deliberately configured for **one CPU**. Secondary-core startup, runtime
+GICv3/PSCI/timer validation, the complete firmware-to-XNU memory handoff, and a proven
+taoyao hardware boot path remain outstanding. A passing CI build or structural artifact
+audit proves neither platform compatibility nor native iOS boot.
+
+Do not use `fastboot flash` with these artifacts. Do not run `fastboot boot` or
+`./xl enter` until the loader configuration and hardware safety preflight have been
+reviewed. Keep the original Android boot chain available for recovery.
+
+For a Windows 11 host-side test, use [the WSL2 + QEMU guide](docs/windows-taoyao-qemu.md).
+It boots the SM7325-built kernel against QEMU's generic `virt` machine; it is not a simulation
+of taoyao hardware and does not authorize flashing or physical-device booting.
 
 ## What is in the repository
 
@@ -37,7 +59,10 @@ Not in the repository, never:
 - keys, certificates, activation, or anything that would make the phone pass as an iPhone to
   Apple's services. Signing in to an Apple account is impossible here and not a goal.
 
-## Status
+## Status of the existing POCO X5 Pro (redwood) port
+
+The following feature table describes the existing redwood port only. It is **not**
+evidence that these features work on Xiaomi 12 Lite taoyao.
 
 | Works | Not yet |
 |---|---|
@@ -69,7 +94,11 @@ qemu/run-ios.sh 1200 -display gtk > logs/qemu.log     # a 20-minute session
 The lock screen appears after two or three minutes. The mouse with the button held is a finger;
 `H` is Home, `L` is the power button, `↑`/`↓` are volume.
 
-## On the phone
+## Existing phone procedure: POCO X5 Pro only
+
+The following commands are for the existing `devices/poco-x5-pro/` port. They are **not
+approved for taoyao**; do not use `./xl enter` on the Xiaomi 12 Lite until its loader and
+hardware safety preflight have explicitly passed.
 
 A phone with a port (`devices/poco-x5-pro/`, POCO X5 Pro 5G), its boot loader unlocked, `adb` and
 `fastboot` on the PC, the images from the previous section, and the phone's own firmware:
@@ -109,7 +138,8 @@ is fetched for you):
 ```sh
 xnu/apply.sh             # XNU sources from Apple's GitHub + my changes -> xnu-src/
 xnu-deps/setup.sh        # dependencies, tools and the SDK
-./xnu-build.sh -j8 -k    # -> xnu-src/.../BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+./xnu-build.sh -j8 -k           # BCM2837 reference kernel only; not taoyao
+MACHINE=SM7325 ./xnu-build.sh -j8 -k  # experimental taoyao target; single-core scaffold only
 ```
 
 The loader: `xnuloader/build.sh` (clang + lld-link, an EFI application without EDK2). The header
@@ -120,6 +150,27 @@ module, or the open lzfse library gets built). User space and the images: `REST=
 (`MODEM=1 SYSTEM=1` put the modem's firmware into the system image). Details: `xnu/README.md`,
 `docs/ru/notes.md`.
 
+## Building the iOS 16.5 userland locally
+
+The CI bring-up package intentionally omits Apple's system volume. To build the userland
+locally on Linux or WSL2, install build tools, 7-Zip 23 or newer, `libssl-dev` and
+`zlib1g-dev`, and keep at least 12 GiB free. Then run:
+
+```sh
+bash tools/build-ios16.5-userland.sh
+```
+
+This downloads the public iOS 16.5 (20F66) iPhone10,3 IPSW components, generates the
+**donor iPhone10,3 identity** from its DeviceTree, rebuilds the UEFI loader with that
+identity, and builds `userland/root.apfs` and `userland/system.apfs` using the repository's
+prebuilt userland binaries. It runs both
+`apfsck` and the kernel's `apfs_lib` read-back checker, then records local SHA-256 hashes.
+
+The system APFS contains Apple software and stays on your own machine; it is not uploaded
+as a public GitHub Actions artifact or committed to this repository. This produces the
+iOS userland image only. It does **not** complete taoyao's UEFI/XNU hardware port or make
+the current bring-up package bootable on the handset.
+
 ## Layout
 
 | Directory | Contents |
@@ -129,7 +180,8 @@ module, or the open lzfse library gets built). User space and the images: `REST=
 | `xnuloader/` | the boot loader (a UEFI application) |
 | `userland/` | my programs and libraries (`src/`), the image build, launchd jobs |
 | `sysimage/` | scripts that fetch and unpack the OS files from the IPSW (none of the files themselves) |
-| `devices/poco-x5-pro/` | one phone: its UEFI port, device tree, prebuilt UEFI images, firmware script, tools |
+| `devices/poco-x5-pro/` | existing POCO X5 Pro reference phone port |
+| `devices/taoyao/` | experimental Xiaomi 12 Lite port: UEFI integration, DTB audit and device-specific tooling |
 | `tools/` | APFS, firmware, QMI tests, run scripts |
 | `qemu/` | running in QEMU |
 | `docs/` | `notes.md`: the detailed notes (Russian); `cellular.md`: cellular; `air.md`, `metal.md`: the GPU |
@@ -137,11 +189,15 @@ module, or the open lzfse library gets built). User space and the images: `REST=
 
 ## Devices
 
-The kernel, loader and user space are shared. Everything about one phone lives in
-`devices/<name>/`: its UEFI, device tree, firmware list and tools. Today there is one,
-`devices/poco-x5-pro/`, and its README is the map of what a port to another Qualcomm phone must bring.
-The phone's drivers are the files `xnu/files/bsd/dev/hakios.*.c`; the head of each says where its
-numbers came from.
+The kernel, loader and user space are shared, but each phone needs its own UEFI integration,
+device tree, firmware list and tools under `devices/<name>/`.
+
+- `devices/poco-x5-pro/` is the existing phone port whose feature claims are summarized above.
+- `devices/taoyao/` is an experimental SM7325 target. Its CI currently compiles a single-core
+  XNU scaffold and UEFI loader; it has not passed a handset boot test and is not a bootable iOS ROM.
+
+The phone drivers are the files `xnu/files/bsd/dev/hakios.*.c`; the head of each says where its
+hardware values came from. Shared SoC blocks do not make board-specific peripherals interchangeable.
 
 ## Cellular
 

@@ -111,12 +111,9 @@ Although `taoyao` shares the `PM7250B` PMIC with `lisa`, **do not use `lisaPkg`'
 
 ---
 
-## 4. Building UEFI & Running HakiOS on `taoyao`
+## 4. Building UEFI & Current Boot Status on `taoyao`
 
 1. **Extract `taoyao` XBL UEFI binaries** (`xbl.img` from official Xiaomi `taoyao` firmware via `UEFIReader` — never commit proprietary `.efi` binaries): see [`uefi/files/Binaries/taoyao/README.md`](uefi/files/Binaries/taoyao/README.md).
 2. **Build `SILICIUM_UEFI.fd` and `BootShim.bin`**: see [`uefi/README.md`](uefi/README.md).
 3. **Populate `devices/taoyao/prebuilt/`**: copy `SILICIUM_UEFI.fd`, `BootShim.bin`, `device-tree.dtb`, `Mu-Silicium/Resources/ramdisk`, and `Mu-Silicium/Resources/Scripts/mkbootimg.py` into `devices/taoyao/prebuilt/`.
-4. **Boot via `fastboot boot` (never flashes partitions)**:
-   - Pull firmware with `make firmware DEVICE=taoyao`.
-   - Pass `SOC_ARGS=devices/taoyao/soc.args` to `tools/modem-cycle.sh` (or `make phone SOC_ARGS=devices/taoyao/soc.args`).
-   - Note: top-level `mkxnuimg.py` defaults to `Build/redwoodPkg` and `devices/poco-x5-pro/prebuilt`; point `mkxnuimg.py` (or a `DEVICE`-aware wrapper) at `Build/taoyaoPkg/.../SILICIUM_UEFI.fd`, `Resources/DTBs/taoyao.dtb`, and `devices/taoyao/prebuilt/` when packing `xnu-usb.img` for `taoyao`.
+4. **Do not boot the current artifact on the handset yet.** The repository currently builds a compile/packaging scaffold; the native XNU boot ABI, Qualcomm CPU feature path, validated GICv3/PSCI initialization, complete memory-map handoff, and hardware-tested taoyao loader path are not complete. `fastboot boot` is non-persistent compared with flashing, but it is still an execution attempt and can hang or crash the handset. Do not use it until the artifact audit passes and the boot chain has been independently reviewed. Never use `fastboot flash` for this bring-up package.

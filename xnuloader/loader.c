@@ -566,6 +566,145 @@ static const struct platform platform_redwood = {
 	.small_cores = 0x0f,
 };
 
+/*
+ * Xiaomi 12 Lite (taoyao), SM7325/Yupik. GIC and PSCI values are read from
+ * the taoyao DTB snapshot. Keep this a single-core profile until CPU topology,
+ * PSCI CPU_ON and GIC SGI routing have been validated on the handset.
+ */
+static const struct platform platform_taoyao = {
+	.name = "taoyao-sm7325", .io_base = 0x00400000, .io_size = 0x3FC00000,
+	.gic_dist = 0x17A00000, .gic_redist = 0x17A60000, .uart = 0, .psci_hvc = 0,
+	.cores = 1, .core_shift = 8,
+	.log_other_cpu = 0,
+	.small_cores = 0,
+};
+
+/* EFI configuration-table entry carrying the flattened device tree. */
+static const efi_guid EFI_DTB_TABLE_GUID = {
+	0xb1b621d5, 0xf19c, 0x41a5, { 0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0 }
+};
+
+static uint32_t
+fdt_be32(const uint8_t *p)
+{
+	return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+}
+
+static int
+bytes_contain(const uint8_t *p, uint32_t size, const char *needle)
+{
+	size_t n = str_len(needle);
+	if (n == 0 || n > size) {
+		return 0;
+	}
+	for (uint32_t i = 0; i <= size - n; i++) {
+		if (memcmp(p + i, needle, n) == 0) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+static int
+fdt_name_is(const uint8_t *strings, uint32_t size, uint32_t offset, const char *name)
+{
+	size_t n = str_len(name);
+	return offset < size && n + 1 <= size - offset &&
+	    memcmp(strings + offset, name, n) == 0 && strings[offset + n] == 0;
+}
+
+static const void *
+efi_device_tree(void)
+{
+	if (ST == NULL || ST->tables == NULL || ST->nr_tables > 128) {
+		return NULL;
+	}
+	for (uint64_t i = 0; i < ST->nr_tables; i++) {
+		if (memcmp(&ST->tables[i].guid, &EFI_DTB_TABLE_GUID, sizeof(EFI_DTB_TABLE_GUID)) == 0) {
+			return ST->tables[i].table;
+		}
+	}
+	return NULL;
+}
+
+/*
+ * Select taoyao only from a validated EFI DTB configuration table. A
+ * framebuffer address is not a board identifier and is never sufficient.
+ */
+static int
+fdt_is_taoyao(const void *table)
+{
+	const uint8_t *b = table;
+	uint32_t total, off_struct, off_strings, size_struct, size_strings;
+	uint32_t p, end;
+	int depth = -1, model_taoyao = 0, compatible_yupik = 0;
+
+	if (b == NULL || fdt_be32(b) != 0xd00dfeed) {
+		return 0;
+	}
+	total = fdt_be32(b + 4);
+	off_struct = fdt_be32(b + 8);
+	off_strings = fdt_be32(b + 12);
+	size_strings = fdt_be32(b + 32);
+	size_struct = fdt_be32(b + 36);
+	if (total < 40 || total > 0x1000000 ||
+	    off_struct > total || size_struct > total - off_struct ||
+	    off_strings > total || size_strings > total - off_strings) {
+		return 0;
+	}
+
+	p = off_struct;
+	end = off_struct + size_struct;
+	while (p + 4 <= end) {
+		uint32_t token = fdt_be32(b + p);
+		p += 4;
+		if (token == 1) { /* FDT_BEGIN_NODE */
+			while (p < end && b[p] != 0) {
+				p++;
+			}
+			if (p >= end) {
+				return 0;
+			}
+			p = (p + 4) & ~3u;
+			depth++;
+		} else if (token == 2) { /* FDT_END_NODE */
+			if (depth == 0) {
+				break;
+			}
+			depth--;
+		} else if (token == 3) { /* FDT_PROP */
+			uint32_t len, nameoff;
+			if (p + 8 > end) {
+				return 0;
+			}
+			len = fdt_be32(b + p);
+			nameoff = fdt_be32(b + p + 4);
+			p += 8;
+			if (len > end - p || nameoff >= size_strings) {
+				return 0;
+			}
+			if (depth == 0) {
+				if (fdt_name_is(b + off_strings, size_strings, nameoff, "model") &&
+				    bytes_contain(b + p, len, "taoyao")) {
+					model_taoyao = 1;
+				} else if (fdt_name_is(b + off_strings, size_strings, nameoff, "compatible") &&
+				    (bytes_contain(b + p, len, "qcom,yupik-idp") ||
+				     bytes_contain(b + p, len, "qcom,yupik"))) {
+					compatible_yupik = 1;
+				}
+			}
+			p = (p + len + 3) & ~3u;
+		} else if (token == 4) { /* FDT_NOP */
+			continue;
+		} else if (token == 9) { /* FDT_END */
+			break;
+		} else {
+			return 0;
+		}
+	}
+	return model_taoyao && compatible_yupik;
+}
+
 /* ------------------------------------------------------------------------ */
 
 static void
@@ -2500,6 +2639,7 @@ install_exception_hook(void)
 
 struct payload_info {
 	const uint8_t *kernel;
+	uint32_t kernel_size;
 	const uint8_t *ramdisk;
 	uint32_t ramdisk_size;
 	const char *cmdline;
@@ -2527,40 +2667,83 @@ static int
 parse_payload(struct payload_info *pi, int verbose)
 {
 	struct payload_header *ph = (struct payload_header *)PAYLOAD_BASE;
+	const uint8_t *p, *pend;
+	int terminated = 0;
 
 	memset(pi, 0, sizeof(*pi));
 	pi->cmdline = "";
-	if (ph->magic != PAYLOAD_MAGIC) {
-		print("no payload at %x (magic %x)\n", PAYLOAD_BASE, (uint64_t)ph->magic);
+	if (ph->magic != PAYLOAD_MAGIC || ph->size > PAYLOAD_MAX_SIZE - sizeof(*ph)) {
+		print("invalid payload header/size at %x (magic %x size %x)\n",
+		    PAYLOAD_BASE, (uint64_t)ph->magic, (uint64_t)ph->size);
 		return 0;
 	}
-	const uint8_t *p = (const uint8_t *)(ph + 1), *pend = p + ph->size;
-	while (p + sizeof(struct payload_entry) <= pend) {
+
+	p = (const uint8_t *)(ph + 1);
+	pend = p + ph->size;
+	while ((uint64_t)(pend - p) >= sizeof(struct payload_entry)) {
 		const struct payload_entry *e = (const struct payload_entry *)p;
-		const char *text = (const char *)(p + sizeof(*e));
+		const uint8_t *data = p + sizeof(*e);
+		uint64_t remaining = (uint64_t)(pend - data);
+		uint64_t aligned_size = ((uint64_t)e->size + 15ULL) & ~15ULL;
+		char name[17];
+		const char *text = (const char *)data;
+		int text_terminated = 0;
+
 		if (e->name[0] == 0) {
+			terminated = 1;
 			break;
 		}
+		if ((uint64_t)e->size > remaining || aligned_size > remaining) {
+			print("payload entry exceeds container bounds (size %x remaining %x)\n",
+			    (uint64_t)e->size, remaining);
+			return 0;
+		}
+
+		memcpy(name, e->name, 16);
+		name[16] = 0;
 		if (verbose) {
-			print("payload entry '%s' size %x\n", e->name, (uint64_t)e->size);
+			print("payload entry '%s' size %x\n", name, (uint64_t)e->size);
 		}
-		if (str_eq(e->name, "ramdisk")) {
-			pi->ramdisk = p + sizeof(*e);             /* becomes /dev/md0, the root device */
+
+		if (str_eq(name, "ramdisk")) {
+			pi->ramdisk = data;
 			pi->ramdisk_size = e->size;
-		} else if (str_eq(e->name, "kernel")) {
-			pi->kernel = p + sizeof(*e);
-		} else if (str_eq(e->name, "cmdline")) {
-			pi->cmdline = text;
-		} else if (str_eq(e->name, "physbase")) {
-			pi->forced_base = parse_number(text, 16); /* testing aid; must be free RAM */
-		} else if (str_eq(e->name, "rdres")) {
-			pi->resident_rd = parse_number(text, 16); /* e.g. loaded there by QEMU; see RESIDENT_RD_OFFSET */
-		} else if (str_eq(e->name, "checkpoint")) {
-			pi->checkpoint = parse_number(text, 10);  /* where the kernel should stop and come back */
-		} else if (str_eq(e->name, "usb")) {
-			pi->usb_mode = 1;                         /* stay in the loader and take commands over USB */
+		} else if (str_eq(name, "kernel")) {
+			if (e->size < sizeof(struct mach_header_64)) {
+				print("payload kernel entry is too small\n");
+				return 0;
+			}
+			pi->kernel = data;
+			pi->kernel_size = e->size;
+		} else if (str_eq(name, "cmdline") || str_eq(name, "physbase") ||
+		    str_eq(name, "rdres") || str_eq(name, "checkpoint")) {
+			for (uint32_t i = 0; i < e->size; i++) {
+				if (data[i] == 0) {
+					text_terminated = 1;
+					break;
+				}
+			}
+			if (!text_terminated) {
+				print("payload text entry '%s' is not NUL terminated\n", name);
+				return 0;
+			}
+			if (str_eq(name, "cmdline")) {
+				pi->cmdline = text;
+			} else if (str_eq(name, "physbase")) {
+				pi->forced_base = parse_number(text, 16);
+			} else if (str_eq(name, "rdres")) {
+				pi->resident_rd = parse_number(text, 16);
+			} else {
+				pi->checkpoint = parse_number(text, 10);
+			}
+		} else if (str_eq(name, "usb")) {
+			pi->usb_mode = 1;
 		}
-		p += sizeof(*e) + ((e->size + 15) & ~15u);
+		p = data + aligned_size;
+	}
+	if (!terminated) {
+		print("payload has no complete terminator entry\n");
+		return 0;
 	}
 	return 1;
 }
@@ -2651,16 +2834,31 @@ print_memory_map(void)
 		print("GetMemoryMap failed\n");
 		return;
 	}
+	if (desc_size < sizeof(efi_memory_descriptor) || desc_size == 0 ||
+	    map_size > sizeof(map_buf) || map_size % desc_size != 0) {
+		print("invalid UEFI memory map descriptor layout\n");
+		return;
+	}
 	memset(totals, 0, sizeof(totals));
 	print("memory map (type 7 = free, 1/2 = loader, 3/4 = boot services, 5/6 = runtime, 0 = reserved):\n");
 	for (uint64_t off = 0; off < map_size; off += desc_size) {
 		efi_memory_descriptor *d = (efi_memory_descriptor *)(map_buf + off);
+		uint64_t bytes;
 
-		if (d->type < 16) {
-			totals[d->type] += d->pages << 12;
+		if (d->pages > (~0ULL >> 12)) {
+			print("  skipping descriptor with overflowing page count\n");
+			continue;
 		}
-		if (d->pages >= 256) {
-			print("  %x - %x  type %d  %d MB\n", d->phys_start, d->phys_start + (d->pages << 12), (uint64_t)d->type,
+		bytes = d->pages << 12;
+		if (d->type < 16) {
+			if (totals[d->type] > ~0ULL - bytes) {
+				totals[d->type] = ~0ULL;
+			} else {
+				totals[d->type] += bytes;
+			}
+		}
+		if (d->pages >= 256 && d->phys_start <= ~0ULL - bytes) {
+			print("  %x - %x  type %d  %d MB\n", d->phys_start, d->phys_start + bytes, (uint64_t)d->type,
 			    d->pages >> 8);
 		}
 	}
@@ -2687,12 +2885,21 @@ choose_window(const struct payload_info *pi)
 		print("GetMemoryMap failed\n");
 		return 0;
 	}
+	if (desc_size < sizeof(efi_memory_descriptor) || desc_size == 0 ||
+	    map_size > sizeof(map_buf) || map_size % desc_size != 0) {
+		print("invalid UEFI memory map descriptor layout\n");
+		return 0;
+	}
 	for (uint64_t off = 0; off < map_size; off += desc_size) {
 		efi_memory_descriptor *d = (efi_memory_descriptor *)(map_buf + off);
-		if (d->type != EfiConventionalMemory) {
+		if (d->type != EfiConventionalMemory || d->pages > (~0ULL >> 12)) {
 			continue;
 		}
-		uint64_t lo = d->phys_start, hi = d->phys_start + (d->pages << 12);
+		uint64_t bytes = d->pages << 12;
+		if (d->phys_start > ~0ULL - bytes) {
+			continue;
+		}
+		uint64_t lo = d->phys_start, hi = d->phys_start + bytes;
 		/* the payload sits in RAM that UEFI may consider free: stay clear of it */
 		if (lo < pay_hi && hi > pay_lo) {
 			if (pay_lo - lo > hi - pay_hi && pay_lo > lo) {
@@ -2700,6 +2907,9 @@ choose_window(const struct payload_info *pi)
 			} else {
 				lo = pay_hi;
 			}
+		}
+		if (lo > ~0ULL - (BASE_ALIGN - 1)) {
+			continue;
 		}
 		lo = (lo + BASE_ALIGN - 1) & ~(BASE_ALIGN - 1);
 		hi &= ~(BASE_ALIGN - 1);
@@ -2710,8 +2920,12 @@ choose_window(const struct payload_info *pi)
 	}
 	print("largest free block %x size %x\n", best_base, best_size);
 	if (pi->forced_base != 0) {
-		best_base = pi->forced_base;
-		best_size = MAX_MEM_SIZE;
+		print("physbase override rejected: explicit physical placement is disabled until independently validated\n");
+		return 0;
+	}
+	if (best_size == 0) {
+		print("no suitable free RAM window found\n");
+		return 0;
 	}
 	if (best_size > MAX_MEM_SIZE) {
 		best_size = MAX_MEM_SIZE;
@@ -2752,34 +2966,66 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	}
 	const uint8_t *kernel = pi.kernel;
 	const struct mach_header_64 *mh = (const struct mach_header_64 *)kernel;
-	if (mh->magic != MH_MAGIC_64) {
-		print("kernel is not a 64-bit Mach-O\n");
+	if (pi.kernel_size < sizeof(*mh) || mh->magic != MH_MAGIC_64 ||
+	    mh->sizeofcmds > pi.kernel_size - sizeof(*mh) ||
+	    mh->ncmds > mh->sizeofcmds / sizeof(struct load_command)) {
+		print("invalid or truncated 64-bit Mach-O header/load-command table\n");
 		return 0;
 	}
 
-	/* --- kernel extent -------------------------------------------------- */
+	/* --- validate every load command before dereferencing command-specific data --- */
 	uint64_t vm_lo = ~0ULL, vm_hi = 0, entry_va = 0;
-	const struct load_command *lc = (const struct load_command *)(mh + 1);
-	for (uint32_t i = 0; i < mh->ncmds; i++, lc = (const void *)((const uint8_t *)lc + lc->cmdsize)) {
+	const uint8_t *cmd = (const uint8_t *)(mh + 1);
+	const uint8_t *cmd_end = cmd + mh->sizeofcmds;
+	for (uint32_t i = 0; i < mh->ncmds; i++) {
+		uint64_t remaining = (uint64_t)(cmd_end - cmd);
+		if (remaining < sizeof(struct load_command)) {
+			print("truncated Mach-O load command header\n");
+			return 0;
+		}
+		const struct load_command *lc = (const struct load_command *)cmd;
+		if (lc->cmdsize < sizeof(*lc) || lc->cmdsize > remaining) {
+			print("invalid Mach-O load command size\n");
+			return 0;
+		}
 		if (lc->cmd == LC_SEGMENT_64) {
+			if (lc->cmdsize < sizeof(struct segment_command_64)) {
+				print("truncated LC_SEGMENT_64 command\n");
+				return 0;
+			}
 			const struct segment_command_64 *sg = (const void *)lc;
-			if (sg->vmsize == 0) {
-				continue;
+			if (sg->filesize > sg->vmsize || sg->fileoff > pi.kernel_size ||
+			    sg->filesize > pi.kernel_size - sg->fileoff ||
+			    sg->vmaddr > ~0ULL - sg->vmsize ||
+			    sg->vmaddr < KERNEL_VIRT_BASE ||
+			    sg->vmaddr - KERNEL_VIRT_BASE > MAX_MEM_SIZE ||
+			    sg->vmsize > MAX_MEM_SIZE - (sg->vmaddr - KERNEL_VIRT_BASE)) {
+				print("invalid Mach-O segment bounds/address range\n");
+				return 0;
 			}
-			if (sg->vmaddr < vm_lo) {
-				vm_lo = sg->vmaddr;
-			}
-			if (sg->vmaddr + sg->vmsize > vm_hi) {
-				vm_hi = sg->vmaddr + sg->vmsize;
+			if (sg->vmsize != 0) {
+				if (sg->vmaddr < vm_lo) {
+					vm_lo = sg->vmaddr;
+				}
+				if (sg->vmaddr + sg->vmsize > vm_hi) {
+					vm_hi = sg->vmaddr + sg->vmsize;
+				}
 			}
 		} else if (lc->cmd == LC_UNIXTHREAD) {
 			/* cmd, cmdsize, flavor, count, x0..x28, fp, lr, sp, pc */
-			entry_va = ((const uint64_t *)((const uint8_t *)lc + 16))[32];
+			if (lc->cmdsize < 16 + 33 * sizeof(uint64_t)) {
+				print("truncated LC_UNIXTHREAD state\n");
+				return 0;
+			}
+			entry_va = ((const uint64_t *)(cmd + 16))[32];
 		}
+		cmd += lc->cmdsize;
 	}
 	print("kernel va %x..%x entry %x\n", vm_lo, vm_hi, entry_va);
-	if (vm_lo < KERNEL_VIRT_BASE + KERNEL_LINK_OFFSET || entry_va == 0) {
-		print("unexpected kernel layout\n");
+	if (vm_lo < KERNEL_VIRT_BASE + KERNEL_LINK_OFFSET || vm_hi <= vm_lo ||
+	    entry_va < vm_lo || entry_va >= vm_hi || vm_hi < KERNEL_VIRT_BASE ||
+	    vm_hi - KERNEL_VIRT_BASE > MAX_MEM_SIZE) {
+		print("unexpected kernel layout or entry point\n");
 		return 0;
 	}
 	if (!choose_window(&pi)) {
@@ -2787,8 +3033,19 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	}
 
 	uint64_t phys_base = win_base;
+	uint64_t kernel_span = vm_hi - KERNEL_VIRT_BASE;
+	if (kernel_span > win_size || phys_base > ~0ULL - kernel_span ||
+	    phys_base + kernel_span > ~0ULL - (PAGE_SIZE_MAX - 1)) {
+		print("kernel virtual range does not fit the claimed physical window\n");
+		return 0;
+	}
 	uint64_t slide = phys_base - KERNEL_VIRT_BASE; /* pa = va + slide */
-	uint64_t kern_lo = vm_lo + slide, kern_hi = (vm_hi + slide + PAGE_SIZE_MAX - 1) & ~(PAGE_SIZE_MAX - 1);
+	uint64_t kern_lo = phys_base + (vm_lo - KERNEL_VIRT_BASE);
+	uint64_t kern_hi = (phys_base + kernel_span + PAGE_SIZE_MAX - 1) & ~(PAGE_SIZE_MAX - 1);
+	if (kern_hi > phys_base + win_size) {
+		print("aligned kernel range exceeds the claimed physical window\n");
+		return 0;
+	}
 	/* The ramdisk must sit inside the kernel's static mapping, i.e. below topOfKernelData. */
 	uint64_t rd_pa = kern_hi;
 	uint64_t rd_size = (pi.ramdisk_size + PAGE_SIZE_MAX - 1) & ~(PAGE_SIZE_MAX - 1);
@@ -2828,7 +3085,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	}
 
 	/* --- load segments -------------------------------------------------- */
-	lc = (const struct load_command *)(mh + 1);
+	const struct load_command *lc = (const struct load_command *)(mh + 1);
 	for (uint32_t i = 0; i < mh->ncmds; i++, lc = (const void *)((const uint8_t *)lc + lc->cmdsize)) {
 		const struct segment_command_64 *sg = (const void *)lc;
 		if (lc->cmd != LC_SEGMENT_64 || sg->vmsize == 0) {
@@ -3951,24 +4208,37 @@ efi_main(efi_handle image, efi_system_table *st)
 	print("CurrentEL=%x MIDR=%x MMFR0=%x CNTFRQ=%d image=%x\n", READ_SYSREG(CurrentEL) >> 2, READ_SYSREG(MIDR_EL1),
 	    READ_SYSREG(ID_AA64MMFR0_EL1), READ_SYSREG(CNTFRQ_EL0), (uint64_t)(uintptr_t)&__ImageBase);
 
-	PLAT = &platform_qemu_virt;
-	if (EFI_ERROR(BS->locate_protocol(&gop_guid, NULL, (void **)&GOP)) || GOP->mode == NULL ||
-	    GOP->mode->info == NULL || GOP->mode->fb_base == 0) {
-		GOP = NULL;                     /* no display (QEMU without -device ramfb) */
-	} else {
-		SCREEN.base = GOP->mode->fb_base;
-		SCREEN.width = GOP->mode->info->width;
-		SCREEN.height = GOP->mode->info->height;
-		SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
-		if (SCREEN.base == 0xE1000000ULL ||
-		    ((READ_SYSREG(MIDR_EL1) & 0xff000000ULL) != 0 && SCREEN.base >= 0x80000000ULL)) {
-			PLAT = &platform_redwood;
-		} else {
-			ramfb_phone_screen();
-		}
-		print("display %d x %d at %x\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
+	const void *fdt = efi_device_tree();
+	int is_taoyao = fdt_is_taoyao(fdt);
+	/*
+	 * A high framebuffer is not a hardware identity. Select taoyao only when
+	 * the EFI configuration table carries a valid DTB with the board model
+	 * and Yupik compatible string; otherwise retain the QEMU reference path.
+	 */
+	PLAT = is_taoyao ? &platform_taoyao : &platform_qemu_virt;
+	print("EFI DTB=%x taoyao_identity=%d\n", (uint64_t)(uintptr_t)fdt, (uint64_t)is_taoyao);
+	if (EFI_ERROR(BS->locate_protocol(&gop_guid, NULL, (void **)&GOP)) ||
+	    GOP == NULL || GOP->mode == NULL || GOP->mode->info == NULL ||
+	    GOP->mode->fb_base == 0) {
+		print("no usable GOP: refusing to guess a platform profile\n");
+		reboot();
 	}
-	print("platform %s\n", PLAT->name);
+	SCREEN.base = GOP->mode->fb_base;
+	SCREEN.width = GOP->mode->info->width;
+	SCREEN.height = GOP->mode->info->height;
+	SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
+	if (SCREEN.base >= 0x80000000ULL && !is_taoyao) {
+		print("unsupported physical platform fb=%x; no matching EFI DTB identity; refusing kernel start\n",
+		    SCREEN.base);
+		reboot();
+	}
+	ramfb_phone_screen();
+	print("display %d x %d at %x\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
+	if (is_taoyao) {
+		print("platform taoyao SM7325 (single-core bring-up profile; native boot not validated)\n");
+	} else {
+		print("platform %s (QEMU reference only)\n", PLAT->name);
+	}
 
 	install_exception_hook();
 	wdt_arm();

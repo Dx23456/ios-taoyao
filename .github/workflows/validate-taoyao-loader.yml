@@ -1,0 +1,63 @@
+name: Validate taoyao UEFI XNU loader
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['work/**']
+    paths:
+      - 'xnuloader/**'
+      - 'tools/build-taoyao-image.sh'
+      - 'tools/build-ios16.5-userland.sh'
+      - 'qemu/run-taoyao-sm7325.sh'
+      - 'mkxnuimg.py'
+      - '.github/workflows/validate-taoyao-loader.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'xnuloader/**'
+      - 'tools/build-taoyao-image.sh'
+      - 'tools/build-ios16.5-userland.sh'
+      - 'qemu/run-taoyao-sm7325.sh'
+      - 'mkxnuimg.py'
+      - '.github/workflows/validate-taoyao-loader.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-loader:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install loader toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld llvm python3
+      - name: Validate scripts
+        run: |
+          set -euo pipefail
+          bash -n xnuloader/build.sh tools/build-taoyao-image.sh tools/build-ios16.5-userland.sh qemu/run-taoyao-sm7325.sh
+          python3 -m py_compile xnuloader/mkpayload.py xnuloader/mkidentity.py mkxnuimg.py
+      - name: Build freestanding ARM64 UEFI loader
+        run: |
+          set -euo pipefail
+          xnuloader/mkidentity.sh --placeholder
+          xnuloader/build.sh
+          file xnuloader/loader.efi
+          test -s xnuloader/loader.efi
+          mkdir -p out
+          cp xnuloader/loader.efi out/taoyao-loader.efi
+          {
+            echo "UEFI loader compile validation only"
+            echo "device profile: FDT-verified taoyao SM7325, single-core"
+            echo "native kernel boot: NOT validated"
+            echo "identity: placeholder (not an Apple IPSW identity)"
+            echo "commit: $GITHUB_SHA"
+          } > out/BUILD-INFO.txt
+          cd out
+          sha256sum * > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: taoyao-uefi-loader-${{ github.sha }}
+          path: out/
+          retention-days: 14

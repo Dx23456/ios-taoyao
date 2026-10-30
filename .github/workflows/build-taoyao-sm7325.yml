@@ -1,0 +1,188 @@
+name: Build HakiOS SM7325 single-core bring-up scaffold
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'work/**'
+    paths:
+      - 'xnu/**'
+      - 'xnu-build.sh'
+      - 'xnu-deps/**'
+      - 'xnuloader/**'
+      - 'userland/**'
+      - 'xl'
+      - 'tools/build-taoyao-image.sh'
+      - 'tools/audit-taoyao-artifacts.py'
+      - 'mkxnuimg.py'
+      - 'devices/taoyao/prebuilt/**'
+      - '.github/workflows/build-taoyao-sm7325.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hakios-sm7325-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  THEOS: ${{ github.workspace }}/theos
+  XNU_TAG: xnu-8796.121.2
+  MACHINE: SM7325
+  KERNEL_BIN: xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_SM7325/mach.development.sm7325
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Reclaim standard-runner disk space
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/local/share/chromium /usr/local/doc/cmake 2>/dev/null || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang lld llvm flex bison m4 perl python3 \
+            git curl tar xz-utils ca-certificates autoconf automake \
+            libtool libxml2 libtinfo6 uuid-dev libssl-dev zlib1g-dev
+
+      - name: Cache Theos Toolchain + SDK
+        id: theos
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.THEOS }}
+          key: theos-linux-x86_64-v1
+
+      - name: Install Theos (Linux cctools + iPhoneOS 16.5 SDK)
+        if: steps.theos.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          rm -rf "$THEOS"
+          mkdir -p "$(dirname "$THEOS")"
+          git clone -q --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+          mkdir -p "$THEOS/toolchain" "$THEOS/sdks"
+          curl -fsSL "https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-x86_64.tar.xz" | tar -xJ -C "$THEOS/toolchain/"
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git "$THEOS/sdks-git"
+          git -C "$THEOS/sdks-git" sparse-checkout set iPhoneOS16.5.sdk
+          ln -sfn "$THEOS/sdks-git/iPhoneOS16.5.sdk" "$THEOS/sdks/iPhoneOS16.5.sdk"
+          test -x "$THEOS/toolchain/linux/iphone/bin/ld"
+          test -d "$THEOS/sdks/iPhoneOS16.5.sdk/usr/include"
+
+      - name: Restore Patched XNU Tree
+        id: xnu-src
+        uses: actions/cache@v4
+        with:
+          path: xnu-src
+          key: xnu-sm7325-${{ env.XNU_TAG }}-${{ hashFiles('xnu/hakios.patch') }}-${{ hashFiles('xnu/files/**') }}
+
+      - name: Apply HakiOS SM7325 XNU Overlay
+        if: steps.xnu-src.outputs.cache-hit != 'true'
+        run: xnu/apply.sh
+
+      - name: Verify SM7325 machine overlay
+        run: |
+          set -euo pipefail
+          . ./xnu-env.sh
+          test -f "$XNU_SRC/config/MASTER.arm64.sm7325"
+          test -f "$XNU_SRC/pexpert/pexpert/arm64/SM7325.h"
+          grep -q 'MACHINE_FLAGS_ARM64_SM7325' "$XNU_SRC/makedefs/MakeInc.def"
+          grep -q 'ARM64_BOARD_CONFIG_SM7325' "$XNU_SRC/pexpert/pexpert/arm64/board_config.h"
+          echo "SM7325 machine config overlay is present."
+
+      - name: Clean previous XNU build products
+        run: |
+          rm -rf "$XNU_SRC/BUILD"
+          rm -f xnu-deps/exporthdrs.log xnu-deps/mig-build.log xnu-deps/tcsh-build.log
+
+      - name: Build XNU dependencies for SM7325
+        run: |
+          set -euo pipefail
+          . ./xnu-env.sh
+          MACHINE=SM7325 xnu-deps/setup.sh --stage1
+          MACHINE=SM7325 xnu-deps/setup.sh --stage2
+
+      - name: Compile SM7325 XNU kernel (single-core scaffold)
+        run: |
+          set -euo pipefail
+          . ./xnu-env.sh
+          MACHINE=SM7325 ./xnu-build.sh -j"$(nproc)" -k
+          test -f "$KERNEL_BIN"
+          file "$KERNEL_BIN"
+          ls -lh "$KERNEL_BIN"
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xnu-sm7325-build-logs-${{ github.sha }}
+          path: |
+            xnu-deps/exporthdrs.log
+            xnu-deps/mig-build.log
+            xnu-deps/tcsh-build.log
+            xnu-src/xnu-8796.121.2/BUILD/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Package taoyao USB loader and SM7325 kernel assets
+        if: success()
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          CHECK=1 XNU_KERNEL="$PWD/$KERNEL_BIN" OUT="$PWD/out/taoyao" bash tools/build-taoyao-image.sh
+          cp out/taoyao/xnu-taoyao-loader.img out/xnu-taoyao-loader.img
+          # boot.img is an alias for the same Android boot-v1 USB-loader container.
+          # It is NOT a native iOS image and must not be flashed as a normal Android boot image.
+          cp out/taoyao/xnu-taoyao-loader.img out/boot.img
+          cp out/taoyao/taoyao-usb.xnup out/taoyao-usb.xnup
+          mkdir -p out/prebuilt out/xnuloader out/userland
+          # Keep the canonical files at the package root for the auditor and
+          # retain the repository layout used by ./xl for local bring-up.
+          cp out/taoyao/root.apfs out/root.apfs
+          cp out/taoyao/root.apfs out/userland/root.apfs
+          cp out/taoyao/taoyao-loader.efi out/taoyao-loader.efi
+          cp out/taoyao/taoyao-loader.efi out/xnuloader/loader.efi
+          cp out/taoyao/mach.development.sm7325 out/prebuilt/mach.development.sm7325
+          rm -rf out/taoyao
+          {
+            echo "HakiOS taoyao SM7325 USB-resident bring-up package"
+            echo "machine: SM7325 / Yupik"
+            echo "image_format: Android boot image v1; loader enters fastboot USB mode"
+            echo "kernel: separate mach.development.sm7325 artifact; uploaded by ./xl run"
+            echo "small_root: root.apfs built from repository prebuilt userland"
+            echo "root_apfs_integrity: CHECK=1 (apfsck + XNU apfs_lib read-back)"
+            echo "system_apfs: NOT included; requires compatible iOS IPSW extraction"
+            echo "cpu_limit: 1 (single-core bring-up profile)"
+            echo "native_taoyao_bootable: NO"
+            echo "hardware_boot_tested: NO"
+            echo "identity: placeholder; not an Apple IPSW identity"
+            echo "EFI board selection: requires matching EFI DTB configuration table"
+            echo "repo: ${{ github.repository }}"
+            echo "commit: ${{ github.sha }}"
+            echo "xnu: $XNU_TAG"
+            echo "built: $(date -u '+%Y-%m-%d %H:%M UTC')"
+          } > out/BUILD-INFO.txt
+          python3 tools/audit-taoyao-artifacts.py --dir out --apfs-checked
+          cd out
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          # Verify every packaged file against the manifest before upload.
+          sha256sum --check SHA256SUMS
+          cat SHA256SUMS
+          file xnu-taoyao-loader.img
+
+      - name: Upload taoyao USB loader and kernel assets
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hakios-taoyao-sm7325-usb-bringup-${{ env.XNU_TAG }}-${{ github.sha }}
+          path: out/
+          retention-days: 14

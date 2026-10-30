@@ -160,14 +160,34 @@ LogMemoryMap ()
   Status = gBS->GetMemoryMap (&MapSize, Map, &MapKey, &DescSize, &DescVersion);
   if (EFI_ERROR (Status)) {
     Log ("getmemorymap status=%r\n", Status);
+    FreePool (Map);
+    return;
+  }
+
+  if (DescSize < sizeof (EFI_MEMORY_DESCRIPTOR) || DescSize == 0 ||
+      MapSize % DescSize != 0) {
+    Log ("invalid memory map descriptor size=%u map_size=%u\n", DescSize, MapSize);
+    FreePool (Map);
     return;
   }
 
   for (UINTN Offset = 0; Offset < MapSize; Offset += DescSize) {
     EFI_MEMORY_DESCRIPTOR *Desc = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)Map + Offset);
+    UINT64                 Bytes;
+
+    if (Desc->NumberOfPages > MAX_UINT64 / EFI_PAGE_SIZE) {
+      Log ("skipping memory descriptor with overflowing page count\n");
+      continue;
+    }
+
+    Bytes = EFI_PAGES_TO_SIZE (Desc->NumberOfPages);
+    if (Desc->PhysicalStart > MAX_UINT64 - Bytes) {
+      Log ("skipping memory descriptor with overflowing physical range\n");
+      continue;
+    }
 
     Log ("%016lx %016lx type=%d attr=%lx\n", Desc->PhysicalStart,
-         Desc->PhysicalStart + EFI_PAGES_TO_SIZE (Desc->NumberOfPages), Desc->Type, Desc->Attribute);
+         Desc->PhysicalStart + Bytes, Desc->Type, Desc->Attribute);
   }
 
   FreePool (Map);
@@ -189,43 +209,26 @@ VOID
 LogPersistence ()
 {
   //
-  // Does RAM written before a reset survive it? The kernel bring-up needs a
-  // place for progress markers. Uses the tail of the reserved payload region.
-  // (Device registers are deliberately not probed here: an MMIO read of the
-  // IMEM / watchdog blocks took a synchronous exception on this platform.)
+  // Read-only observation only. The payload reservation may contain live
+  // XNUP bytes; never mutate its tail with a diagnostic marker.
   //
-  UINT32 *Ram = (UINT32 *)(UINTN)(XNU_PAYLOAD_BASE + XNU_PAYLOAD_MAX_SIZE - SIZE_4KB);
+  CONST volatile UINT32 *Ram =
+    (CONST volatile UINT32 *)(UINTN)(XNU_PAYLOAD_BASE + XNU_PAYLOAD_MAX_SIZE - SIZE_4KB);
 
   Log ("[persistence]\n");
-  Log ("ram_before=%08x %08x\n", Ram[0], Ram[1]);
-
-  Ram[1] = (Ram[0] == XNU_MARKER_MAGIC) ? Ram[1] + 1 : 1;
-  Ram[0] = XNU_MARKER_MAGIC;
-
-  Log ("ram_after=%08x %08x\n", Ram[0], Ram[1]);
+  Log ("marker_before=%08x %08x (read-only; no RAM mutation)\n", Ram[0], Ram[1]);
 }
 
 STATIC
 VOID
 FlushLog ()
 {
-  EFI_STATUS             Status;
-  EFI_BLOCK_IO_PROTOCOL *BlockIo;
-  UINTN                  BlockSize;
-  UINTN                  WriteSize;
-
-  BlockIo = FindPartition (XNU_LOG_PARTITION);
-  if (BlockIo == NULL) {
-    return;
-  }
-
-  BlockSize = BlockIo->Media->BlockSize;
-  WriteSize = ALIGN_VALUE (mLogLen + 1, BlockSize);
-
-  Status = BlockIo->WriteBlocks (BlockIo, BlockIo->Media->MediaId, 0, WriteSize, mLog);
-  if (!EFI_ERROR (Status)) {
-    BlockIo->FlushBlocks (BlockIo);
-  }
+  //
+  // Deliberately RAM-only. A GPT partition name does not prove that LBA 0
+  // is disposable; writing there can destroy partition data. Persistent
+  // diagnostics require a separately validated offset and partition layout.
+  //
+  // No disk writes. The in-memory log remains available until reset.
 }
 
 //
@@ -241,32 +244,63 @@ StartPayloadLoader ()
   UINT8              *Cursor;
   UINT8              *End;
 
-  if (Header->Magic != XNU_PAYLOAD_MAGIC || Header->Size > XNU_PAYLOAD_MAX_SIZE) {
+  // Header->Size counts bytes following the header. Keep the complete
+  // container inside the fixed UEFI reservation before parsing any entry.
+  if (Header->Magic != XNU_PAYLOAD_MAGIC ||
+      Header->Size > XNU_PAYLOAD_MAX_SIZE - sizeof (*Header)) {
+    Log ("[payload] invalid magic or container size\n");
     return;
   }
 
   Cursor = (UINT8 *)(Header + 1);
   End    = Cursor + Header->Size;
 
-  while (Cursor + sizeof (XNU_PAYLOAD_ENTRY) <= End) {
+  while ((UINTN)(End - Cursor) >= sizeof (XNU_PAYLOAD_ENTRY)) {
     XNU_PAYLOAD_ENTRY *Entry = (XNU_PAYLOAD_ENTRY *)Cursor;
+    UINTN              Remaining;
+    UINTN              AlignedSize;
 
     if (Entry->Name[0] == 0) {
-      break;
+      return;
+    }
+
+    Cursor += sizeof (*Entry);
+    Remaining = (UINTN)(End - Cursor);
+    if ((UINTN)Entry->Size > Remaining) {
+      Log ("[payload] truncated entry size=%u remaining=%u\n", Entry->Size, Remaining);
+      return;
+    }
+
+    AlignedSize = ALIGN_VALUE ((UINTN)Entry->Size, 16);
+    if (AlignedSize > Remaining) {
+      Log ("[payload] entry alignment exceeds container bounds\n");
+      return;
     }
 
     if (AsciiStrnCmp (Entry->Name, "loader.efi", sizeof (Entry->Name)) == 0) {
       EFI_HANDLE Handle;
+      EFI_STATUS Status;
 
-      if (!EFI_ERROR (gBS->LoadImage (FALSE, gImageHandle, NULL, Entry + 1, Entry->Size, &Handle))) {
-        gBS->StartImage (Handle, NULL, NULL);
+      if (Entry->Size == 0) {
+        Log ("[payload] loader.efi has zero length\n");
+        return;
       }
 
+      Status = gBS->LoadImage (FALSE, gImageHandle, NULL, Cursor, Entry->Size, &Handle);
+      if (EFI_ERROR (Status)) {
+        Log ("[payload] LoadImage failed: %r\n", Status);
+        return;
+      }
+
+      Status = gBS->StartImage (Handle, NULL, NULL);
+      Log ("[payload] StartImage returned: %r\n", Status);
       return;
     }
 
-    Cursor += sizeof (XNU_PAYLOAD_ENTRY) + ALIGN_VALUE (Entry->Size, 16);
+    Cursor += AlignedSize;
   }
+
+  Log ("[payload] no complete loader.efi entry found\n");
 }
 
 VOID
