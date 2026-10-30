@@ -9,6 +9,10 @@ on:
       - 'xnu/**'
       - 'xnu-build.sh'
       - 'xnu-deps/**'
+      - 'xnuloader/**'
+      - 'tools/build-taoyao-image.sh'
+      - 'mkxnuimg.py'
+      - 'devices/taoyao/prebuilt/**'
       - '.github/workflows/build-taoyao-sm7325.yml'
 
 permissions:
@@ -119,16 +123,25 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      - name: Package compile-only artifacts
+      - name: Package experimental taoyao fastboot boot image
         if: success()
         run: |
+          set -euo pipefail
           mkdir -p out
           cp "$KERNEL_BIN" out/mach.development.sm7325.single-core-scaffold
+          XNU_KERNEL="$PWD/$KERNEL_BIN" OUT="$PWD/out/taoyao" tools/build-taoyao-image.sh
+          cp out/taoyao/xnu-taoyao.img out/xnu-taoyao-experimental-boot.img
+          cp out/taoyao/taoyao.xnup out/taoyao.xnup
+          cp xnuloader/loader.efi out/taoyao-loader.efi
           {
-            echo "HakiOS SM7325 compile-only scaffold"
-            echo "machine: SM7325"
-            echo "cpu_limit: 1 (secondary CPU / PSCI path not implemented)"
+            echo "HakiOS taoyao SM7325 experimental Android boot image"
+            echo "machine: SM7325 / Yupik"
+            echo "image_format: Android boot image v1 (fastboot boot package)"
+            echo "cpu_limit: 1 (single-core bring-up profile)"
             echo "native_taoyao_bootable: NO"
+            echo "hardware_boot_tested: NO"
+            echo "identity: placeholder; not an Apple IPSW identity"
+            echo "EFI board selection: requires matching EFI DTB configuration table"
             echo "repo: ${{ github.repository }}"
             echo "commit: ${{ github.sha }}"
             echo "xnu: $XNU_TAG"
@@ -137,11 +150,12 @@ jobs:
           cd out
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
+          file xnu-taoyao-experimental-boot.img
 
-      - name: Upload compile-only artifact
+      - name: Upload experimental taoyao boot image
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: hakios-sm7325-single-core-scaffold-${{ env.XNU_TAG }}-${{ github.sha }}
+          name: hakios-taoyao-sm7325-experimental-boot-${{ env.XNU_TAG }}-${{ github.sha }}
           path: out/
           retention-days: 14
