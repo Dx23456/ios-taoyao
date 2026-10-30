@@ -95,7 +95,7 @@ jobs:
           p = Path("build_uefi.py")
           s = p.read_text()
           old = 'f"FD_SIZE={fd_size}"'
-          new = old + ',\\n        "CFLAGS=--target=aarch64-linux-gnu -DPAYLOAD_BASE=0xf0000000"'
+          new = old + ',\n        "CFLAGS=--target=aarch64-linux-gnu -DPAYLOAD_BASE=0xf0000000"'
           if old not in s:
               raise SystemExit("Could not locate BootShim make arguments in build_uefi.py")
           p.write_text(s.replace(old, new, 1))
@@ -128,8 +128,9 @@ jobs:
               raise SystemExit(f"FAIL: expected Android boot header v1, got {header_version}")
           if not kernel_size or not ramdisk_size:
               raise SystemExit("FAIL: kernel or ramdisk payload is empty")
-          if len(b) <= 4096 + kernel_size:
-              raise SystemExit("FAIL: image is truncated before the ramdisk")
+          ramdisk_offset = 4096 + ((kernel_size + 4095) // 4096) * 4096
+          if ramdisk_offset + ramdisk_size > len(b):
+              raise SystemExit("FAIL: image is truncated before the complete ramdisk")
           print(f"PASS: Android boot-v1 container; kernel={kernel_size}; ramdisk={ramdisk_size}; total={len(b)}")
           PY
           {
