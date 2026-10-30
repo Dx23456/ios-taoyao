@@ -1,0 +1,146 @@
+name: Build HakiOS SM7325 single-core bring-up scaffold
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'work/**'
+    paths:
+      - 'xnu/**'
+      - 'xnu-build.sh'
+      - 'xnu-deps/**'
+      - '.github/workflows/build-taoyao-sm7325.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hakios-sm7325-\${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  THEOS: \${{ github.workspace }}/theos
+  XNU_TAG: xnu-8796.121.2
+  MACHINE: SM7325
+  KERNEL_BIN: xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_SM7325/mach.development.sm7325
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang lld llvm flex bison m4 perl python3 \
+            git curl tar xz-utils ca-certificates autoconf automake \
+            libtool libxml2 libtinfo6 uuid-dev
+
+      - name: Cache Theos Toolchain + SDK
+        id: theos
+        uses: actions/cache@v4
+        with:
+          path: \${{ env.THEOS }}
+          key: theos-linux-x86_64-v1
+
+      - name: Install Theos (Linux cctools + iPhoneOS 16.5 SDK)
+        if: steps.theos.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          rm -rf "$THEOS"
+          mkdir -p "$(dirname "$THEOS")"
+          git clone -q --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+          mkdir -p "$THEOS/toolchain" "$THEOS/sdks"
+          curl -fsSL "https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-x86_64.tar.xz" | tar -xJ -C "$THEOS/toolchain/"
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git "$THEOS/sdks-git"
+          git -C "$THEOS/sdks-git" sparse-checkout set iPhoneOS16.5.sdk
+          ln -sfn "$THEOS/sdks-git/iPhoneOS16.5.sdk" "$THEOS/sdks/iPhoneOS16.5.sdk"
+          test -x "$THEOS/toolchain/linux/iphone/bin/ld"
+          test -d "$THEOS/sdks/iPhoneOS16.5.sdk/usr/include"
+
+      - name: Restore Patched XNU Tree
+        id: xnu-src
+        uses: actions/cache@v4
+        with:
+          path: xnu-src
+          key: xnu-sm7325-\${{ env.XNU_TAG }}-\${{ hashFiles('xnu/hakios.patch') }}-\${{ hashFiles('xnu/files/**') }}
+
+      - name: Apply HakiOS SM7325 XNU Overlay
+        if: steps.xnu-src.outputs.cache-hit != 'true'
+        run: xnu/apply.sh
+
+      - name: Verify SM7325 machine overlay
+        run: |
+          set -euo pipefail
+          test -f "$XNU_SRC/config/MASTER.arm64.sm7325"
+          test -f "$XNU_SRC/pexpert/pexpert/arm64/SM7325.h"
+          grep -q 'MACHINE_FLAGS_ARM64_SM7325' "$XNU_SRC/makedefs/MakeInc.def"
+          grep -q 'ARM64_BOARD_CONFIG_SM7325' "$XNU_SRC/pexpert/pexpert/arm64/board_config.h"
+          echo "SM7325 machine config overlay is present."
+
+      - name: Clean previous XNU build products
+        run: |
+          rm -rf "$XNU_SRC/BUILD"
+          rm -f xnu-deps/exporthdrs.log xnu-deps/mig-build.log xnu-deps/tcsh-build.log
+
+      - name: Build XNU dependencies for SM7325
+        run: |
+          set -euo pipefail
+          . ./xnu-env.sh
+          MACHINE=SM7325 xnu-deps/setup.sh --stage1
+          MACHINE=SM7325 xnu-deps/setup.sh --stage2
+
+      - name: Compile SM7325 XNU kernel (single-core scaffold)
+        run: |
+          set -euo pipefail
+          . ./xnu-env.sh
+          MACHINE=SM7325 ./xnu-build.sh -j"$(nproc)" -k
+          test -f "$KERNEL_BIN"
+          file "$KERNEL_BIN"
+          ls -lh "$KERNEL_BIN"
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xnu-sm7325-build-logs-\${{ github.sha }}
+          path: |
+            xnu-deps/exporthdrs.log
+            xnu-deps/mig-build.log
+            xnu-deps/tcsh-build.log
+            xnu-src/xnu-8796.121.2/BUILD/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Package compile-only artifacts
+        if: success()
+        run: |
+          mkdir -p out
+          cp "$KERNEL_BIN" out/mach.development.sm7325.single-core-scaffold
+          {
+            echo "HakiOS SM7325 compile-only scaffold"
+            echo "machine: SM7325"
+            echo "cpu_limit: 1 (secondary CPU / PSCI path not implemented)"
+            echo "native_taoyao_bootable: NO"
+            echo "repo: \${{ github.repository }}"
+            echo "commit: \${{ github.sha }}"
+            echo "xnu: $XNU_TAG"
+            echo "built: $(date -u '+%Y-%m-%d %H:%M UTC')"
+          } > out/BUILD-INFO.txt
+          cd out
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload compile-only artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hakios-sm7325-single-core-scaffold-\${{ env.XNU_TAG }}-\${{ github.sha }}
+          path: out/
+          retention-days: 14
