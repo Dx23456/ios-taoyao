@@ -86,3 +86,15 @@ For each hardware value, record its source (live DTB, UEFI memory map, firmware 
 ## Scope
 
 This file is a platform readiness checklist. It does not add SM7325 drivers, a native XNU machine implementation, or a bootable kernel.
+
+## SM7325 bring-up scaffold
+
+The SoC-level Linux device-tree reference findings and the next XNU integration steps are documented in [SM7325_PORTING.md](SM7325_PORTING.md). Reference constants are isolated in [sm7325-soc-reference.h](sm7325-soc-reference.h); they are **not** XNU board configuration values and must not be used for MMIO before exact-device DTB validation.
+
+Run the read-only live-DTB preflight with:
+
+```sh
+python3 devices/taoyao/xnu/audit-sm7325-dtb.py taoyao-live.dtb
+```
+
+The CI self-test uses a synthetic fixture only. It validates the auditor, not the phone's live hardware and not a native XNU build.
