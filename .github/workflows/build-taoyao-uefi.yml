@@ -1,0 +1,128 @@
+name: Build taoyao Silicium UEFI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      XBL_URL: ${{ secrets.TAOYAO_XBL_URL }}
+      XBL_SHA256: ${{ secrets.TAOYAO_XBL_SHA256 }}
+      MU_DIR: ${{ github.workspace }}/../Mu-Silicium
+      OUT_DIR: ${{ github.workspace }}/out/taoyao-uefi
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate protected inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$XBL_URL" && -n "$XBL_SHA256" ]] || {
+            echo "::error::Configure TAOYAO_XBL_URL and TAOYAO_XBL_SHA256 repository secrets."
+            exit 1
+          }
+          [[ "$XBL_URL" == https://* ]] || { echo "::error::XBL URL must use HTTPS."; exit 1; }
+          [[ "$XBL_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "::error::Invalid SHA-256."; exit 1; }
+          test -s devices/taoyao/prebuilt/device-tree.dtb
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang lld llvm nasm gcc-aarch64-linux-gnu git python3 python3-pip python3-venv mono-complete curl p7zip-full
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Download and verify official XBL
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/taoyao"
+          curl --fail --location --silent --show-error --retry 3 -o "$RUNNER_TEMP/taoyao/xbl.img" "$XBL_URL"
+          printf '%s  %s\n' "$XBL_SHA256" "$RUNNER_TEMP/taoyao/xbl.img" | sha256sum --check --status || {
+            echo "::error::xbl.img checksum mismatch."
+            exit 1
+          }
+
+      - name: Apply pinned Mu-Silicium port
+        run: |
+          set -euo pipefail
+          devices/taoyao/uefi/apply.sh
+          test -f "$MU_DIR/Platforms/Xiaomi/taoyaoPkg/taoyao.dsc"
+          test -f "$MU_DIR/Resources/DTBs/taoyao.dtb"
+
+      - name: Extract proprietary drivers from device XBL
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/MSMTools/UEFIReader.git "$RUNNER_TEMP/UEFIReader"
+          dotnet run --project "$RUNNER_TEMP/UEFIReader/UEFIReader/UEFIReader.csproj" -- "$RUNNER_TEMP/taoyao/xbl.img" "$MU_DIR/Binaries/taoyao"
+          mapfile -t qcom_dirs < <(find "$MU_DIR/Binaries/taoyao" -mindepth 2 -maxdepth 3 -type d -name QcomPkg)
+          [[ "${#qcom_dirs[@]}" -eq 1 ]] || { echo "::error::Could not uniquely locate UEFIReader QcomPkg output."; exit 1; }
+          build_root="$(dirname "${qcom_dirs[0]}")"
+          cp -a "$build_root/." "$MU_DIR/Binaries/taoyao/"
+          rm -rf "$build_root"
+          for f in QcomPkg/Drivers/EnvDxe/EnvDxe.inf QcomPkg/Drivers/UFSDxe/UFSDxe.inf QcomPkg/Drivers/UsbConfigDxe/UsbConfigDxe.inf QcomPkg/Drivers/UsbMsdDxe/UsbMsdDxe.inf QcomPkg/Drivers/ButtonsDxe/ButtonsDxe.inf RawFiles/uefiplat.cfg RawFiles/SecParti.cfg RawFiles/uefipil.cfg; do
+            test -s "$MU_DIR/Binaries/taoyao/$f" || { echo "::error::Missing XBL extraction: $f"; exit 1; }
+          done
+          while IFS= read -r f; do
+            test -s "$MU_DIR/Binaries/taoyao/$f" || { echo "::error::Missing referenced vendor file: $f"; exit 1; }
+          done < <(grep -hE '^[[:space:]]*INF Binaries/taoyao/' devices/taoyao/uefi/files/Platforms/Xiaomi/taoyaoPkg/Include/*.inc | sed -E 's#^[[:space:]]*INF Binaries/taoyao/##' | sort -u)
+
+      - name: Prepare Python environment
+        run: |
+          python3 -m venv "$RUNNER_TEMP/uefi-venv"
+          "$RUNNER_TEMP/uefi-venv/bin/pip" install --upgrade pip
+          "$RUNNER_TEMP/uefi-venv/bin/pip" install -r "$MU_DIR/pip-requirements.txt"
+
+      - name: Build UEFI firmware volume
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/uefi-venv/bin/activate"
+          cd "$MU_DIR"
+          python3 build_uefi.py -d taoyao -r RELEASE
+          fd="Build/taoyaoPkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd"
+          test -s "$fd"
+          [[ "$(stat -c %s "$fd")" -eq 2097152 ]] || { echo "::error::UEFI FD must be exactly 2 MiB."; exit 1; }
+          install -D "$fd" "$OUT_DIR/SILICIUM_UEFI.fd"
+
+      - name: Build HakiOS BootShim
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$MU_DIR"
+          make -C BootShim REQUIRES_KERNEL_HEADER=1 FD_BASE=0x9fd00000 FD_SIZE=0x200000 CFLAGS="--target=aarch64-linux-gnu -DPAYLOAD_BASE=0xf0000000"
+          test -s BootShim/BootShim.bin
+          install -D BootShim/BootShim.bin "$OUT_DIR/BootShim.bin"
+          install -D Resources/DTBs/taoyao.dtb "$OUT_DIR/taoyao.dtb"
+
+      - name: Audit and checksum outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "Target: Xiaomi 12 Lite taoyao / SM7325 / AArch64"
+            echo "Mu-Silicium base: $(cat devices/taoyao/uefi/BASE)"
+            echo "UEFI FD base: 0x9FD00000"
+            echo "UEFI FD size: 0x00200000"
+            echo "Payload reservation: 0xF0000000..0xF4000000"
+            echo "XBL checksum verified; source XBL not packaged separately"
+            echo "Hardware boot tested: NO"
+            echo "Native XNU bootable: NO"
+          } > "$OUT_DIR/BUILD-INFO.txt"
+          (cd "$OUT_DIR" && sha256sum SILICIUM_UEFI.fd BootShim.bin taoyao.dtb BUILD-INFO.txt > SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: taoyao-silicium-uefi-${{ github.sha }}
+          path: out/taoyao-uefi/
+          if-no-files-found: error
+          retention-days: 3
