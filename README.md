@@ -34,6 +34,10 @@ Do not use `fastboot flash` with these artifacts. Do not run `fastboot boot` or
 `./xl enter` until the loader configuration and hardware safety preflight have been
 reviewed. Keep the original Android boot chain available for recovery.
 
+For a Windows 11 host-side test, use [the WSL2 + QEMU guide](docs/windows-taoyao-qemu.md).
+It boots the SM7325-built kernel against QEMU's generic `virt` machine; it is not a simulation
+of taoyao hardware and does not authorize flashing or physical-device booting.
+
 ## What is in the repository
 
 Only my code and my data:
