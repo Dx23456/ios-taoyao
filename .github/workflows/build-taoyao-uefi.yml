@@ -11,25 +11,22 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
-      XBL_URL: ${{ secrets.TAOYAO_XBL_URL }}
-      XBL_SHA256: ${{ secrets.TAOYAO_XBL_SHA256 }}
+      TAOYAO_ROM_URL: https://bigota.d.miui.com/OS1.0.34.0.ULIMIXM/taoyao_global_images_OS1.0.34.0.ULIMIXM_20260525.0000.00_14.0_global_e8602e568a.tgz
+      TAOYAO_ROM_MD5: e8602e568a7b82cabc34b7f3aeb43b72
       MU_DIR: ${{ github.workspace }}/Mu-Silicium
       OUT_DIR: ${{ github.workspace }}/out/taoyao-uefi
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate protected inputs
+      - name: Validate target inputs
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "$XBL_URL" && -n "$XBL_SHA256" ]] || {
-            echo "::error::Configure TAOYAO_XBL_URL and TAOYAO_XBL_SHA256 repository secrets."
-            exit 1
-          }
-          [[ "$XBL_URL" == https://* ]] || { echo "::error::XBL URL must use HTTPS."; exit 1; }
-          [[ "$XBL_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "::error::Invalid SHA-256."; exit 1; }
+          [[ "$TAOYAO_ROM_URL" == https://bigota.d.miui.com/* ]] || { echo "::error::Unexpected firmware host."; exit 1; }
+          [[ "$TAOYAO_ROM_MD5" =~ ^[0-9a-fA-F]{32}$ ]] || { echo "::error::Invalid ROM MD5."; exit 1; }
           test -s devices/taoyao/prebuilt/device-tree.dtb
+          echo "Using official Xiaomi 12 Lite Global firmware for model family 2203129G / taoyao."
 
       - name: Install dependencies
         run: |
@@ -40,16 +37,26 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Download and verify official XBL
+      - name: Download verified official Xiaomi fastboot ROM and extract XBL
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/taoyao"
-          curl --fail --location --silent --show-error --retry 3 -o "$RUNNER_TEMP/taoyao/xbl.img" "$XBL_URL"
-          printf '%s  %s\n' "$XBL_SHA256" "$RUNNER_TEMP/taoyao/xbl.img" | sha256sum --check --status || {
-            echo "::error::xbl.img checksum mismatch."
+          mkdir -p "$RUNNER_TEMP/taoyao/rom" "$RUNNER_TEMP/taoyao/extract"
+          rom="$RUNNER_TEMP/taoyao/taoyao-global-fastboot.tgz"
+          curl --fail --location --silent --show-error --retry 3 --output "$rom" "$TAOYAO_ROM_URL"
+          printf '%s  %s\n' "$TAOYAO_ROM_MD5" "$rom" | md5sum --check --status || {
+            echo "::error::Official Xiaomi fastboot ROM MD5 mismatch."
             exit 1
           }
+          tar -xzf "$rom" -C "$RUNNER_TEMP/taoyao/extract" --wildcards '*/images/xbl.img'
+          mapfile -t xbls < <(find "$RUNNER_TEMP/taoyao/extract" -type f -name xbl.img)
+          [[ "${#xbls[@]}" -eq 1 && -s "${xbls[0]}" ]] || {
+            echo "::error::Could not uniquely extract images/xbl.img from verified ROM."
+            exit 1
+          }
+          install -m 0644 "${xbls[0]}" "$RUNNER_TEMP/taoyao/xbl.img"
+          sha256sum "$RUNNER_TEMP/taoyao/xbl.img" | tee "$RUNNER_TEMP/taoyao/xbl.sha256"
+          rm -f "$rom"
 
       - name: Apply pinned Mu-Silicium port
         run: |
@@ -140,7 +147,7 @@ jobs:
             echo "UEFI FD base: 0x9FD00000"
             echo "UEFI FD size: 0x00200000"
             echo "BootShim payload base: 0xF0000000"
-            echo "XBL checksum verified; proprietary XBL source not packaged"
+            echo "Official Xiaomi Global ROM MD5 verified; extracted XBL SHA-256 recorded; proprietary XBL source not packaged"
             echo "Hardware UEFI boot tested: NO"
             echo "Native XNU bootable: NO"
             echo "Do not flash or fastboot boot this experimental image."
