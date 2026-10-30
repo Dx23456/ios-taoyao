@@ -67,7 +67,7 @@ def check(dts: str) -> dict:
 
     # Xiaomi's DTB identifies the SoC as Yupik IDP, not always qcom,sm7325.
     soc_compat = [v for v in ("qcom,yupik-idp", "qcom,yupik", "qcom,sm7325")
-                  if re.search(r'"' + re.escape(v) + r'"', dts)]
+                  if v in dts]
     checks["sm7325_compatible"] = {
         "pass": bool(soc_compat),
         "observed": soc_compat,
@@ -83,12 +83,20 @@ def check(dts: str) -> dict:
 
     gic = find_block(dts, r"(?:\w+\s*:\s*)?interrupt-controller@17a00000")
     gic_reg = cells(property_value(gic, "reg") or "") if gic else []
+    # Qualcomm's /soc parent uses one address cell and one size cell;
+    # some upstream DTS variants use two cells for each field.
     gic_ok = (
-        len(gic_reg) >= 8
-        and gic_reg[1] == EXPECTED["gicd_base"]
-        and gic_reg[3] == EXPECTED["gicd_size"]
-        and gic_reg[5] == EXPECTED["gicr_base"]
-        and gic_reg[7] == EXPECTED["gicr_size"]
+        (len(gic_reg) >= 4
+         and gic_reg[0] == EXPECTED["gicd_base"]
+         and gic_reg[1] == EXPECTED["gicd_size"]
+         and gic_reg[2] == EXPECTED["gicr_base"]
+         and gic_reg[3] == EXPECTED["gicr_size"])
+        or
+        (len(gic_reg) >= 8
+         and gic_reg[1] == EXPECTED["gicd_base"]
+         and gic_reg[3] == EXPECTED["gicd_size"]
+         and gic_reg[5] == EXPECTED["gicr_base"]
+         and gic_reg[7] == EXPECTED["gicr_size"])
     )
     checks["gicv3_ranges"] = {
         "pass": bool(gic and '"arm,gic-v3"' in gic and gic_ok),
