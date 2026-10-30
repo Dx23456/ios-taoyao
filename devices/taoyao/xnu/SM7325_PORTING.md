@@ -23,7 +23,7 @@ Sources (file blob IDs are recorded so the exact upstream inputs can be rechecke
 - `torvalds/linux:arch/arm64/boot/dts/qcom/sm7325.dtsi`, blob `beb279956df69785682e20f6e99a86243da72e92`. This identifies SM7325 as Kryo 670 and specializes all eight CPU nodes.
 - `torvalds/linux:arch/arm64/boot/dts/qcom/kodiak.dtsi`, blob `8c7523602d2719775b8f5c6a8cef138a93292721`. This supplies the common CPU, PSCI, GICv3 and timer descriptions inherited by the SM7325 DTS.
 
-The taoyao device-tree is the authority for board-specific overrides. Do not assume every upstream common-DTS value is unchanged by Xiaomi's downstream firmware.
+The committed `devices/taoyao/prebuilt/device-tree.dtb` snapshot reports root model `taoyao based Qualcomm Technologies, Inc. Yupik IDP + PM7250B`, root compatible `qcom,yupik-idp` / `qcom,yupik` / `qcom,idp`, CPU compatible `qcom,kryo`, and timer PPIs 13/14/11/12. Its DTB blob SHA is `fb25d56e5bd29348401a9c98369f6f18b8c152f9`. This is repository evidence, not proof that it is the currently booted phone's live DTB; recapture `/sys/firmware/fdt` from the target before native bring-up. The upstream generic timer list ends in PPI 10, so the PPI 12 difference must be investigated rather than normalized away.
 
 The corresponding constants are kept in `sm7325-soc-reference.h`. That header is deliberately reference-only and must not be included by XNU platform code yet.
 
@@ -43,7 +43,7 @@ Run the audit on a Linux/macOS build host with Device Tree Compiler installed:
 python3 devices/taoyao/xnu/audit-sm7325-dtb.py taoyao-live.dtb
 ```
 
-The audit checks the SoC compatible, eight CPU nodes, GICv3 ranges, PSCI SMC declaration and architected timer interrupt list against the upstream common-DTS reference. A mismatch is a stop condition: investigate the live DTB rather than overriding it with a guessed constant.
+The audit accepts the Yupik/SM7325 compatible spellings found in the board DTB, and checks eight CPU nodes, GICv3 ranges, PSCI SMC declaration and the board DTB's timer PPI list (13/14/11/12). The PPI difference from the upstream generic DTS is explicitly documented; it is not proof that XNU timer programming is correct.
 
 ## 3. Current XNU machine scaffold
 
