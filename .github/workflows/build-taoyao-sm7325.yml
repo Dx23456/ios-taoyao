@@ -133,9 +133,11 @@ jobs:
           XNU_KERNEL="$PWD/$KERNEL_BIN" OUT="$PWD/out/taoyao" bash tools/build-taoyao-image.sh
           cp out/taoyao/xnu-taoyao-loader.img out/xnu-taoyao-loader.img
           cp out/taoyao/taoyao-usb.xnup out/taoyao-usb.xnup
-          cp out/taoyao/root.apfs out/root.apfs
-          cp out/taoyao/taoyao-loader.efi out/taoyao-loader.efi
-          cp out/taoyao/mach.development.sm7325 out/mach.development.sm7325
+          mkdir -p out/prebuilt out/xnuloader out/userland
+          cp out/taoyao/root.apfs out/userland/root.apfs
+          cp out/taoyao/taoyao-loader.efi out/xnuloader/loader.efi
+          cp out/taoyao/mach.development.sm7325 out/prebuilt/mach.development.sm7325
+          rm -rf out/taoyao
           {
             echo "HakiOS taoyao SM7325 USB-resident bring-up package"
             echo "machine: SM7325 / Yupik"
@@ -154,7 +156,7 @@ jobs:
             echo "built: $(date -u '+%Y-%m-%d %H:%M UTC')"
           } > out/BUILD-INFO.txt
           cd out
-          sha256sum * > SHA256SUMS
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
           cat SHA256SUMS
           file xnu-taoyao-loader.img
 
