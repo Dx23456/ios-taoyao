@@ -22,10 +22,11 @@ on:
           - stock       # from the iOS 16.5 IPSW device tree (34 KB, Apple's public CDN)
           - placeholder # Apple-free identity; builds/boots, but not for the iOS user space
   push:
+    # This is the BCM2837 reference-only build. Do not run it for taoyao
+    # work branches; the SM7325 workflow is the device-specific build.
     branches:
       - main
       - dev/*
-      - 'work/**'
     paths-ignore:
       - '**.md'
       - 'LICENSE'
