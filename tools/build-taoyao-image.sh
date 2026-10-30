@@ -1,7 +1,8 @@
-
 #!/usr/bin/env bash
-# Assemble the taoyao HakiOS boot chain.
-# Requires a separately built, SM7325-compatible ARM64 XNU kernel.
+# Build the taoyao USB-resident XNU loader image and the separate kernel/root assets.
+# The Android boot image enters the UEFI loader's fastboot command loop; it does not
+# claim to boot iOS by itself. A system.apfs built from an iOS IPSW is uploaded later
+# with ./xl ramdisk, then ./xl run starts the SM7325 XNU kernel.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,14 +11,7 @@ cd "$ROOT"
 DEVICE=taoyao
 OUT="${OUT:-$ROOT/out/taoyao}"
 XNU_KERNEL="${XNU_KERNEL:-}"
-
 PREBUILT="devices/$DEVICE/prebuilt"
-
-if [[ -z "$XNU_KERNEL" || ! -f "$XNU_KERNEL" ]]; then
-    echo "ERROR: Set XNU_KERNEL to a built ARM64 XNU kernel."
-    echo "Example: XNU_KERNEL=/path/to/mach.taoyao $0"
-    exit 1
-fi
 
 for f in \
     "$PREBUILT/BootShim.bin" \
@@ -33,44 +27,74 @@ done
 
 mkdir -p "$OUT"
 
-echo "[1/5] Generate loader identity"
+echo "[1/6] Build minimal HakiOS root APFS from prebuilt userland"
+(
+    cd userland
+    PREBUILT=1 ./build.sh
+)
+ROOT_APFS="$ROOT/userland/root.apfs"
+[[ -s "$ROOT_APFS" ]] || {
+    echo "ERROR: userland/root.apfs was not produced"
+    exit 1
+}
+file "$ROOT_APFS"
+
+echo "[2/6] Generate loader identity placeholder"
 xnuloader/mkidentity.sh --placeholder
 
-echo "[2/5] Build ARM64 UEFI XnuLoader"
+echo "[3/6] Build ARM64 UEFI XnuLoader"
 xnuloader/build.sh
-
-test -s xnuloader/loader.efi
+[[ -s xnuloader/loader.efi ]] || {
+    echo "ERROR: xnuloader/loader.efi was not produced"
+    exit 1
+}
 file xnuloader/loader.efi
 
-echo "[3/5] Validate supplied kernel"
-file "$XNU_KERNEL"
+if [[ -n "$XNU_KERNEL" ]]; then
+    [[ -s "$XNU_KERNEL" ]] || {
+        echo "ERROR: XNU_KERNEL does not exist or is empty: $XNU_KERNEL"
+        exit 1
+    }
+    echo "[4/6] Validate and stage SM7325 kernel"
+    file "$XNU_KERNEL"
+    cp "$XNU_KERNEL" "$OUT/mach.development.sm7325"
+else
+    echo "[4/6] No kernel supplied; loader-only image will be built"
+fi
 
-echo "[4/5] Create XNUP payload"
+echo "[5/6] Create USB-mode loader payload (kernel is uploaded later by ./xl run)"
 python3 xnuloader/mkpayload.py \
-    -o "$OUT/taoyao.xnup" \
+    -o "$OUT/taoyao-usb.xnup" \
     "loader.efi=xnuloader/loader.efi" \
-    "kernel=$XNU_KERNEL" \
-    "ramdisk=$PREBUILT/ramdisk" \
-    --cmdline "platform=taoyao soc=sm7325"
+    --usb
 
-echo "[5/5] Assemble Android boot image"
+echo "[6/6] Assemble Android boot image"
 python3 mkxnuimg.py \
     --device taoyao \
-    --payload "$OUT/taoyao.xnup" \
-    --output "$OUT/xnu-taoyao.img"
+    --payload "$OUT/taoyao-usb.xnup" \
+    --output "$OUT/xnu-taoyao-loader.img"
+
+cp "$ROOT_APFS" "$OUT/root.apfs"
+cp xnuloader/loader.efi "$OUT/taoyao-loader.efi"
 
 {
     echo "Device: Xiaomi 12 Lite (taoyao)"
-    echo "SoC: Qualcomm SM7325 / yupik"
-    echo "XNU kernel: $XNU_KERNEL"
-    echo "Identity: placeholder"
-    echo "Build status: experimental; hardware boot not verified"
+    echo "SoC: Qualcomm SM7325 / Yupik"
+    echo "Boot image: Android boot image v1; UEFI loader USB mode"
+    echo "Kernel: uploaded separately by ./xl run"
+    echo "Small APFS root: root.apfs (built from repository prebuilt userland)"
+    echo "System APFS: not included; build from a compatible iOS IPSW and upload with ./xl ramdisk"
+    echo "CPU profile: single-core only"
+    echo "Native taoyao boot: NOT validated"
+    echo "Hardware boot test: NOT performed"
+    echo "Identity: placeholder; not an Apple IPSW identity"
     echo "Date: $(date -u)"
 } > "$OUT/BUILD-INFO.txt"
 
 (
     cd "$OUT"
-    sha256sum taoyao.xnup xnu-taoyao.img BUILD-INFO.txt > SHA256SUMS
+    sha256sum taoyao-usb.xnup xnu-taoyao-loader.img root.apfs taoyao-loader.efi \
+        ${XNU_KERNEL:+mach.development.sm7325} BUILD-INFO.txt > SHA256SUMS
 )
 
 echo
