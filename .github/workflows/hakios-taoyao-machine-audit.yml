@@ -1,0 +1,200 @@
+
+name: HakiOS taoyao Native XNU Machine Audit
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "xnu/**"
+      - "xnu-build.sh"
+      - "xnu-env.sh"
+      - "xnu-deps/setup.sh"
+      - "devices/taoyao/**"
+      - ".github/workflows/hakios-taoyao-machine-audit.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: taoyao-machine-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  machine-audit:
+    name: Inspect XNU 8796.121.2 for SM7325
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      XNU_SRC: ${{ github.workspace }}/xnu-src/xnu-8796.121.2
+
+    steps:
+      - name: Checkout HakiOS repository
+        uses: actions/checkout@v4
+
+      - name: Install audit dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git grep findutils
+
+      - name: Validate HakiOS source files
+        shell: bash
+        run: |
+          set -eu
+
+          for f in \
+            xnu/apply.sh \
+            xnu/hakios.patch \
+            xnu/files \
+            xnu-build.sh \
+            xnu-env.sh \
+            xnu-deps/setup.sh
+          do
+            test -e "$f" || {
+              echo "Missing required file: $f"
+              exit 1
+            }
+            echo "FOUND: $f"
+          done
+
+      - name: Fetch and apply pinned XNU source
+        shell: bash
+        run: |
+          set -eu
+          bash xnu/apply.sh "$XNU_SRC"
+
+          test -d "$XNU_SRC/config"
+          test -f "$XNU_SRC/makedefs/MakeInc.def"
+
+          echo "XNU source prepared successfully."
+          git -C "$XNU_SRC" rev-parse HEAD
+
+      - name: Generate machine configuration audit
+        shell: bash
+        run: |
+          set -u
+
+          mkdir -p audit-output
+          REPORT="audit-output/taoyao-machine-audit.txt"
+
+          {
+            echo "HakiOS taoyao Native XNU Machine Audit"
+            echo "======================================"
+            echo "Repository: $GITHUB_REPOSITORY"
+            echo "Commit: $GITHUB_SHA"
+            echo "Date: $(date -u)"
+            echo
+
+            echo "=== 1. XNU SOURCE IDENTITY ==="
+            git -C "$XNU_SRC" describe --tags --always || true
+            git -C "$XNU_SRC" rev-parse HEAD || true
+            echo
+
+            echo "=== 2. BUILD TARGET SELECTION ==="
+            grep -nE 'ARCH_CONFIGS|MACHINE_CONFIGS|MACHINE:-|ARM64_BOARD_CONFIG' \
+              xnu-build.sh || true
+            echo
+
+            echo "=== 3. AVAILABLE MACHINE CONFIGURATION FILES ==="
+            find "$XNU_SRC/config" -type f \
+              \( -iname '*arm64*' -o -iname '*bcm*' -o -iname '*machine*' \) \
+              -print 2>/dev/null | sort | head -n 300
+            echo
+
+            echo "=== 4. BCM2837 REFERENCES IN XNU ==="
+            grep -RInE 'BCM2837|ARM64_BOARD_CONFIG_BCM2837' \
+              "$XNU_SRC/config" \
+              "$XNU_SRC/osfmk" \
+              "$XNU_SRC/pexpert" \
+              "$XNU_SRC/makedefs" \
+              --exclude-dir=.git \
+              --include='*.h' \
+              --include='*.c' \
+              --include='*.defs' \
+              --include='*.make' \
+              --include='Makefile*' \
+              2>/dev/null | head -n 300 || true
+            echo
+
+            echo "=== 5. ARM64 MACHINE AND BOARD CONFIGURATION REFERENCES ==="
+            grep -RInE 'MACHINE_CONFIGS|ARM64_BOARD_CONFIG|BOARD_CONFIG|ARM64_CONFIG' \
+              "$XNU_SRC/config" \
+              "$XNU_SRC/osfmk" \
+              "$XNU_SRC/pexpert" \
+              "$XNU_SRC/makedefs" \
+              --exclude-dir=.git \
+              --include='*.h' \
+              --include='*.c' \
+              --include='*.defs' \
+              --include='*.make' \
+              --include='Makefile*' \
+              2>/dev/null | head -n 300 || true
+            echo
+
+            echo "=== 6. PAGE SIZE AND GRANULE ASSUMPTIONS ==="
+            grep -RInE 'PAGE_SHIFT|PAGE_SIZE|ARM_PGSHIFT|ARM_PGBYTES|16K|16 KB|4 KB|4K' \
+              "$XNU_SRC/osfmk/arm64" \
+              "$XNU_SRC/pexpert" \
+              "$XNU_SRC/config" \
+              --exclude-dir=.git \
+              --include='*.h' \
+              --include='*.c' \
+              --include='*.defs' \
+              2>/dev/null | head -n 300 || true
+            echo
+
+            echo "=== 7. ARM64 BOOT AND PLATFORM INITIALIZATION ==="
+            grep -RInE 'PE_init|machine_startup|arm_init|platform_init|start_kernel|pmap_bootstrap|ml_static_ptovirt' \
+              "$XNU_SRC/osfmk/arm64" \
+              "$XNU_SRC/pexpert" \
+              --exclude-dir=.git \
+              --include='*.h' \
+              --include='*.c' \
+              2>/dev/null | head -n 300 || true
+            echo
+
+            echo "=== 8. HAKIOS PATCH AND OVERLAY REFERENCES ==="
+            grep -RInE 'BCM2837|SM7325|taoyao|ARM64_BOARD_CONFIG' \
+              xnu \
+              --exclude='*.md' \
+              2>/dev/null | head -n 300 || true
+            echo
+
+            echo "=== 9. DEPENDENCY BUILD BOARD DEFINITIONS ==="
+            grep -nE 'ARM64_BOARD_CONFIG|BCM2837|MACHINE_CONFIGS' \
+              xnu-deps/setup.sh || true
+            echo
+
+            echo "=== 10. DEVICE UEFI CONFIGURATION ==="
+            grep -RInE 'SM7325|SOC_TYPE|taoyao|XNU Payload|UEFI FD' \
+              devices/taoyao \
+              --include='*.c' \
+              --include='*.h' \
+              --include='*.dsc' \
+              --include='*.toml' \
+              --include='*.md' \
+              2>/dev/null | head -n 250 || true
+            echo
+
+            echo "=== 11. PRELIMINARY ASSESSMENT ==="
+            echo "This report inventories source references only."
+            echo "It does not prove native SM7325 XNU support."
+            echo "No kernel compilation or device flashing was performed."
+            echo
+            echo "Required before native build:"
+            echo "- Verify an actual ARM64 machine configuration."
+            echo "- Implement or adapt the platform-specific XNU code."
+            echo "- Resolve BCM2837-specific dependency definitions."
+            echo "- Verify page size, memory map, boot protocol and CPU support."
+            echo "- Validate the XNU-to-XnuLoader handoff."
+
+          } 2>&1 | tee "$REPORT"
+
+      - name: Upload machine audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: taoyao-native-xnu-machine-audit
+          path: audit-output/
+          if-no-files-found: warn
+          retention-days: 14
