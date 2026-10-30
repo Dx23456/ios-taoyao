@@ -143,6 +143,11 @@ def audit_macho(path: pathlib.Path, report: list[str]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dir", type=pathlib.Path, required=True)
+    parser.add_argument(
+        "--apfs-checked",
+        action="store_true",
+        help="caller completed CHECK=1 (apfsck + XNU apfs_lib read-back) before this audit",
+    )
     args = parser.parse_args()
     root = args.dir.resolve()
     report = [
@@ -165,8 +170,14 @@ def main() -> int:
         info = read(root / "BUILD-INFO.txt").decode("utf-8")
         for marker in ("native_taoyao_bootable: NO", "hardware_boot_tested: NO", "system_apfs: NOT included"):
             require(marker in info, f"BUILD-INFO.txt is missing safety marker: {marker}")
+        if args.apfs_checked:
+            require("root_apfs_integrity: CHECK=1 (apfsck + XNU apfs_lib read-back)" in info,
+                    "BUILD-INFO.txt does not record the completed APFS check")
+            report.append("PASS root APFS filesystem consistency/read-back: CHECK=1 completed before packaging")
+        else:
+            report.append("NOT TESTED: root APFS filesystem consistency/read-back; build with CHECK=1")
         report.append("PASS required package members and duplicate-file consistency")
-        report.append("NOT TESTED: APFS filesystem consistency/read-back, UEFI execution, fastboot boot, PSCI, GICv3, XNU boot, native iOS boot.")
+        report.append("NOT TESTED: full iOS system APFS (not included), UEFI execution, fastboot boot, PSCI, GICv3, XNU boot, native iOS boot.")
     except (OSError, ValueError, struct.error, UnicodeError) as exc:
         report.append(f"FAIL: {exc}")
         (root / "ARTIFACT-AUDIT.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
