@@ -2500,6 +2500,7 @@ install_exception_hook(void)
 
 struct payload_info {
 	const uint8_t *kernel;
+	uint32_t kernel_size;
 	const uint8_t *ramdisk;
 	uint32_t ramdisk_size;
 	const char *cmdline;
@@ -2574,6 +2575,7 @@ parse_payload(struct payload_info *pi, int verbose)
 				return 0;
 			}
 			pi->kernel = data;
+			pi->kernel_size = e->size;
 		} else if (str_eq(name, "cmdline") || str_eq(name, "physbase") ||
 		    str_eq(name, "rdres") || str_eq(name, "checkpoint")) {
 			for (uint32_t i = 0; i < e->size; i++) {
@@ -2825,30 +2827,57 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	}
 	const uint8_t *kernel = pi.kernel;
 	const struct mach_header_64 *mh = (const struct mach_header_64 *)kernel;
-	if (mh->magic != MH_MAGIC_64) {
-		print("kernel is not a 64-bit Mach-O\n");
+	if (pi.kernel_size < sizeof(*mh) || mh->magic != MH_MAGIC_64 ||
+	    mh->sizeofcmds > pi.kernel_size - sizeof(*mh) ||
+	    mh->ncmds > mh->sizeofcmds / sizeof(struct load_command)) {
+		print("invalid or truncated 64-bit Mach-O header/load-command table\n");
 		return 0;
 	}
 
-	/* --- kernel extent -------------------------------------------------- */
+	/* --- validate every load command before dereferencing command-specific data --- */
 	uint64_t vm_lo = ~0ULL, vm_hi = 0, entry_va = 0;
-	const struct load_command *lc = (const struct load_command *)(mh + 1);
-	for (uint32_t i = 0; i < mh->ncmds; i++, lc = (const void *)((const uint8_t *)lc + lc->cmdsize)) {
+	const uint8_t *cmd = (const uint8_t *)(mh + 1);
+	const uint8_t *cmd_end = cmd + mh->sizeofcmds;
+	for (uint32_t i = 0; i < mh->ncmds; i++) {
+		uint64_t remaining = (uint64_t)(cmd_end - cmd);
+		if (remaining < sizeof(struct load_command)) {
+			print("truncated Mach-O load command header\n");
+			return 0;
+		}
+		const struct load_command *lc = (const struct load_command *)cmd;
+		if (lc->cmdsize < sizeof(*lc) || lc->cmdsize > remaining) {
+			print("invalid Mach-O load command size\n");
+			return 0;
+		}
 		if (lc->cmd == LC_SEGMENT_64) {
+			if (lc->cmdsize < sizeof(struct segment_command_64)) {
+				print("truncated LC_SEGMENT_64 command\n");
+				return 0;
+			}
 			const struct segment_command_64 *sg = (const void *)lc;
-			if (sg->vmsize == 0) {
-				continue;
+			if (sg->filesize > sg->vmsize || sg->fileoff > pi.kernel_size ||
+			    sg->filesize > pi.kernel_size - sg->fileoff ||
+			    sg->vmaddr > ~0ULL - sg->vmsize) {
+				print("invalid Mach-O segment bounds\n");
+				return 0;
 			}
-			if (sg->vmaddr < vm_lo) {
-				vm_lo = sg->vmaddr;
-			}
-			if (sg->vmaddr + sg->vmsize > vm_hi) {
-				vm_hi = sg->vmaddr + sg->vmsize;
+			if (sg->vmsize != 0) {
+				if (sg->vmaddr < vm_lo) {
+					vm_lo = sg->vmaddr;
+				}
+				if (sg->vmaddr + sg->vmsize > vm_hi) {
+					vm_hi = sg->vmaddr + sg->vmsize;
+				}
 			}
 		} else if (lc->cmd == LC_UNIXTHREAD) {
 			/* cmd, cmdsize, flavor, count, x0..x28, fp, lr, sp, pc */
-			entry_va = ((const uint64_t *)((const uint8_t *)lc + 16))[32];
+			if (lc->cmdsize < 16 + 33 * sizeof(uint64_t)) {
+				print("truncated LC_UNIXTHREAD state\n");
+				return 0;
+			}
+			entry_va = ((const uint64_t *)(cmd + 16))[32];
 		}
+		cmd += lc->cmdsize;
 	}
 	print("kernel va %x..%x entry %x\n", vm_lo, vm_hi, entry_va);
 	if (vm_lo < KERNEL_VIRT_BASE + KERNEL_LINK_OFFSET || entry_va == 0) {
