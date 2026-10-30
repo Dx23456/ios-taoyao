@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 240
     env:
       # Official Xiaomi 12 Lite (taoyao) Global fastboot ROM.
-      # hugeota is attempted first; bigota is the official fallback.
+      # bigota is attempted first; hugeota is the official fallback.
       XIAOMI_ROM_NAME: taoyao_global_images_OS1.0.34.0.ULIMIXM_20260525.0000.00_14.0_global_e8602e568a.tgz
       XIAOMI_ROM_MD5: e8602e568a7b82cabc34b7f3aeb43b72
       XIAOMI_ROM_PATH: /OS1.0.34.0.ULIMIXM/taoyao_global_images_OS1.0.34.0.ULIMIXM_20260525.0000.00_14.0_global_e8602e568a.tgz
@@ -48,8 +48,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/taoyao"
           cd "$RUNNER_TEMP/taoyao"
           urls=(
-            "https://hugeota.d.miui.com${XIAOMI_ROM_PATH}"
             "https://bigota.d.miui.com${XIAOMI_ROM_PATH}"
+            "https://hugeota.d.miui.com${XIAOMI_ROM_PATH}"
           )
           downloaded=0
           for url in "${urls[@]}"; do
@@ -105,7 +105,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/WOA-Project/UEFIReader.git "$RUNNER_TEMP/UEFIReader"
+          git clone --depth 1 https://github.com/MSMTools/UEFIReader.git "$RUNNER_TEMP/UEFIReader"
           dotnet run --project "$RUNNER_TEMP/UEFIReader/UEFIReader/UEFIReader.csproj" -- "$RUNNER_TEMP/taoyao/xbl.img" "$MU_DIR/Binaries/taoyao"
           mapfile -t qcom_dirs < <(find "$MU_DIR/Binaries/taoyao" -mindepth 2 -maxdepth 3 -type d -name QcomPkg)
           [[ "${#qcom_dirs[@]}" -eq 1 ]] || { echo "::error::Could not uniquely locate UEFIReader QcomPkg output."; exit 1; }
@@ -183,7 +183,7 @@ jobs:
             echo "UEFI FD size: 0x00200000"
             echo "BootShim payload base: 0xF0000000"
             echo "Firmware source: official Xiaomi taoyao Global OS1.0.34.0.ULIMIXM fastboot ROM"
-            echo "Firmware CDN: hugeota.d.miui.com first, bigota.d.miui.com fallback"
+            echo "Firmware CDN: bigota.d.miui.com first, hugeota.d.miui.com fallback"
             echo "Firmware ROM MD5 verified before XBL extraction"
             echo "Hardware UEFI boot tested: NO"
             echo "Native XNU bootable: NO"
