@@ -30,7 +30,7 @@ mkdir -p "$OUT"
 echo "[1/6] Build minimal HakiOS root APFS from prebuilt userland"
 (
     cd userland
-    PREBUILT=1 ./build.sh
+    CHECK="${CHECK:-}" PREBUILT=1 ./build.sh
 )
 ROOT_APFS="$ROOT/userland/root.apfs"
 [[ -s "$ROOT_APFS" ]] || {
