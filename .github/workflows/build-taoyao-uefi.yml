@@ -13,7 +13,7 @@ jobs:
     env:
       XBL_URL: ${{ secrets.TAOYAO_XBL_URL }}
       XBL_SHA256: ${{ secrets.TAOYAO_XBL_SHA256 }}
-      MU_DIR: ${{ github.workspace }}/../Mu-Silicium
+      MU_DIR: ${{ github.workspace }}/Mu-Silicium
       OUT_DIR: ${{ github.workspace }}/out/taoyao-uefi
 
     steps:
@@ -82,47 +82,73 @@ jobs:
           "$RUNNER_TEMP/uefi-venv/bin/pip" install --upgrade pip
           "$RUNNER_TEMP/uefi-venv/bin/pip" install -r "$MU_DIR/pip-requirements.txt"
 
-      - name: Build UEFI firmware volume
+      - name: Build UEFI and package Android boot-v1 image
         shell: bash
         run: |
           set -euo pipefail
           source "$RUNNER_TEMP/uefi-venv/bin/activate"
           cd "$MU_DIR"
+
+          # Add the taoyao XNUP destination to Mu-Silicium's BootShim make call.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("build_uefi.py")
+          s = p.read_text()
+          old = 'f"FD_SIZE={fd_size}"'
+          new = old + ',\\n        "CFLAGS=--target=aarch64-linux-gnu -DPAYLOAD_BASE=0xf0000000"'
+          if old not in s:
+              raise SystemExit("Could not locate BootShim make arguments in build_uefi.py")
+          p.write_text(s.replace(old, new, 1))
+          PY
+
           python3 build_uefi.py -d taoyao -r RELEASE
+          test -s Mu-taoyao.img
           fd="Build/taoyaoPkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd"
           test -s "$fd"
           [[ "$(stat -c %s "$fd")" -eq 2097152 ]] || { echo "::error::UEFI FD must be exactly 2 MiB."; exit 1; }
           install -D "$fd" "$OUT_DIR/SILICIUM_UEFI.fd"
-
-      - name: Build HakiOS BootShim
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$MU_DIR"
-          make -C BootShim REQUIRES_KERNEL_HEADER=1 FD_BASE=0x9fd00000 FD_SIZE=0x200000 CFLAGS="--target=aarch64-linux-gnu -DPAYLOAD_BASE=0xf0000000"
-          test -s BootShim/BootShim.bin
           install -D BootShim/BootShim.bin "$OUT_DIR/BootShim.bin"
           install -D Resources/DTBs/taoyao.dtb "$OUT_DIR/taoyao.dtb"
+          install -D Mu-taoyao.img "$OUT_DIR/uefi.img"
 
-      - name: Audit and checksum outputs
+      - name: Audit image structure and checksums
         shell: bash
         run: |
           set -euo pipefail
+          python3 - "$OUT_DIR/uefi.img" <<'PY'
+          import pathlib, struct, sys
+          p = pathlib.Path(sys.argv[1])
+          b = p.read_bytes()
+          if len(b) < 4096 or b[:8] != b"ANDROID!":
+              raise SystemExit("FAIL: output is not an Android boot image")
+          header_version = struct.unpack_from("<I", b, 40)[0]
+          kernel_size = struct.unpack_from("<I", b, 8)[0]
+          ramdisk_size = struct.unpack_from("<I", b, 16)[0]
+          if header_version != 1:
+              raise SystemExit(f"FAIL: expected Android boot header v1, got {header_version}")
+          if not kernel_size or not ramdisk_size:
+              raise SystemExit("FAIL: kernel or ramdisk payload is empty")
+          if len(b) <= 4096 + kernel_size:
+              raise SystemExit("FAIL: image is truncated before the ramdisk")
+          print(f"PASS: Android boot-v1 container; kernel={kernel_size}; ramdisk={ramdisk_size}; total={len(b)}")
+          PY
           {
             echo "Target: Xiaomi 12 Lite taoyao / SM7325 / AArch64"
-            echo "Mu-Silicium base: $(cat devices/taoyao/uefi/BASE)"
+            echo "Artifact: uefi.img"
+            echo "Format: Android boot image header v1; compressed BootShim + UEFI FD + appended DTB; Mu-Silicium ramdisk"
             echo "UEFI FD base: 0x9FD00000"
             echo "UEFI FD size: 0x00200000"
-            echo "Payload reservation: 0xF0000000..0xF4000000"
-            echo "XBL checksum verified; source XBL not packaged separately"
-            echo "Hardware boot tested: NO"
+            echo "BootShim payload base: 0xF0000000"
+            echo "XBL checksum verified; proprietary XBL source not packaged"
+            echo "Hardware UEFI boot tested: NO"
             echo "Native XNU bootable: NO"
+            echo "Do not flash or fastboot boot this experimental image."
           } > "$OUT_DIR/BUILD-INFO.txt"
-          (cd "$OUT_DIR" && sha256sum SILICIUM_UEFI.fd BootShim.bin taoyao.dtb BUILD-INFO.txt > SHA256SUMS)
+          (cd "$OUT_DIR" && sha256sum uefi.img SILICIUM_UEFI.fd BootShim.bin taoyao.dtb BUILD-INFO.txt > SHA256SUMS)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: taoyao-silicium-uefi-${{ github.sha }}
+          name: taoyao-uefi-image-${{ github.sha }}
           path: out/taoyao-uefi/
           if-no-files-found: error
           retention-days: 3
