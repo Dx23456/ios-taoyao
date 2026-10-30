@@ -1,0 +1,376 @@
+
+name: HakiOS taoyao Complete Read-only Audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "devices/taoyao/**"
+      - "xnuloader/**"
+      - "xnu/**"
+      - "xnu-build.sh"
+      - "xnu-deps/setup.sh"
+      - "mkxnuimg.py"
+      - ".github/workflows/hakios-taoyao-complete-audit.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: taoyao-complete-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Audit UEFI, XNU and SM7325
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+
+    env:
+      XNU_SRC: ${{ runner.temp }}/xnu-src
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            device-tree-compiler \
+            file \
+            binutils \
+            git \
+            python3
+
+      - name: Create report directory
+        run: mkdir -p audit-output
+
+      - name: Validate project files
+        shell: bash
+        run: |
+          set -u
+
+          files=(
+            devices/taoyao/README.md
+            devices/taoyao/soc.args
+            devices/taoyao/pull-soc.sh
+            devices/taoyao/pull-firmware.sh
+            devices/taoyao/uefi/README.md
+            devices/taoyao/uefi/apply.sh
+            devices/taoyao/uefi/export.sh
+            devices/taoyao/uefi/mu-silicium.patch
+            devices/taoyao/uefi/files/Platforms/Xiaomi/taoyaoPkg/taoyao.dsc
+            devices/taoyao/uefi/files/Platforms/Xiaomi/taoyaoPkg/taoyao.fdf
+            devices/taoyao/uefi/files/Platforms/Xiaomi/taoyaoPkg/Library/MemoryMapLib/MemoryMapLib.c
+            devices/taoyao/uefi/files/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/XnuLoader.c
+            devices/taoyao/uefi/files/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/XnuLoader.h
+            devices/taoyao/uefi/files/Resources/Configs/taoyao.toml
+            devices/taoyao/prebuilt/BootShim.bin
+            devices/taoyao/prebuilt/SILICIUM_UEFI.fd
+            devices/taoyao/prebuilt/device-tree.dtb
+            xnuloader/loader.c
+            xnuloader/build.sh
+            xnuloader/mkpayload.py
+            xnu-build.sh
+            xnu/apply.sh
+            xnu-deps/setup.sh
+            mkxnuimg.py
+          )
+
+          {
+            echo "Repository: $GITHUB_REPOSITORY"
+            echo "Commit: $GITHUB_SHA"
+            echo
+            for f in "${files[@]}"; do
+              if [ -f "$f" ]; then
+                echo "FOUND: $f ($(stat -c %s "$f") bytes)"
+              else
+                echo "MISSING: $f"
+              fi
+            done
+          } | tee audit-output/project-files.txt
+
+      - name: Validate shell and Python syntax
+        shell: bash
+        run: |
+          set -u
+          {
+            for f in \
+              devices/taoyao/pull-soc.sh \
+              devices/taoyao/pull-firmware.sh \
+              devices/taoyao/uefi/apply.sh \
+              devices/taoyao/uefi/export.sh \
+              xnuloader/build.sh \
+              xnu-build.sh \
+              xnu/apply.sh \
+              xnu-deps/setup.sh
+            do
+              if [ -f "$f" ]; then
+                if bash -n "$f"; then
+                  echo "PASS shell: $f"
+                else
+                  echo "FAIL shell: $f"
+                fi
+              fi
+            done
+
+            for f in \
+              tools/soc-args.py \
+              devices/taoyao/tools/cellular_probe.py \
+              devices/taoyao/tools/modem_firmware.py \
+              xnuloader/mkpayload.py \
+              xnuloader/mkidentity.py \
+              mkxnuimg.py
+            do
+              if [ -f "$f" ]; then
+                if python3 -m py_compile "$f"; then
+                  echo "PASS python: $f"
+                else
+                  echo "FAIL python: $f"
+                fi
+              fi
+            done
+          } 2>&1 | tee audit-output/syntax.txt
+
+      - name: Inspect taoyao device tree
+        shell: bash
+        run: |
+          set -u
+          DTB=devices/taoyao/prebuilt/device-tree.dtb
+
+          if [ ! -s "$DTB" ]; then
+            echo "BLOCKED: taoyao DTB is missing or empty." \
+              | tee audit-output/device-tree.txt
+            exit 0
+          fi
+
+          file "$DTB" | tee audit-output/dtb-file.txt
+
+          if ! dtc -I dtb -O dts \
+              -o audit-output/taoyao-device-tree.dts \
+              "$DTB" 2>audit-output/dtc-warnings.txt; then
+            echo "FAIL: DTB could not be decoded." \
+              | tee audit-output/device-tree.txt
+            exit 0
+          fi
+
+          {
+            echo "=== Device tree identity ==="
+            grep -nE 'model|compatible|qcom,msm-id|qcom,board-id|xiaomi,board-id' \
+              audit-output/taoyao-device-tree.dts | head -n 100 || true
+
+            echo
+            echo "=== CPU topology ==="
+            grep -nE 'cpu-map|cpu@|enable-method|reg =|capacity-dmips-mhz' \
+              audit-output/taoyao-device-tree.dts | head -n 160 || true
+
+            echo
+            echo "=== GIC and interrupt controller ==="
+            grep -nE 'interrupt-controller|arm,gic|redistributor|#interrupt-cells' \
+              audit-output/taoyao-device-tree.dts | head -n 100 || true
+
+            echo
+            echo "=== PSCI and timer ==="
+            grep -nE 'psci|method =|arm,armv8-timer|clock-frequency' \
+              audit-output/taoyao-device-tree.dts | head -n 100 || true
+
+            echo
+            echo "=== Reserved memory ==="
+            grep -nE 'reserved-memory|no-map|reusable|memory-region|reg = ' \
+              audit-output/taoyao-device-tree.dts | head -n 200 || true
+          } | tee audit-output/device-tree.txt
+
+      - name: Check UEFI memory-map intervals
+        shell: bash
+        run: |
+          python3 - <<'PY' | tee audit-output/memory-map.txt
+          import pathlib
+          import re
+          import sys
+
+          path = pathlib.Path(
+              "devices/taoyao/uefi/files/Platforms/Xiaomi/"
+              "taoyaoPkg/Library/MemoryMapLib/MemoryMapLib.c"
+          )
+          source = path.read_text()
+          source = source.split("// Other Memory Regions")[0]
+
+          pattern = re.compile(
+              r'\{"([^"]+)",\s*(0x[0-9A-Fa-f]+),\s*'
+              r'(0x[0-9A-Fa-f]+),'
+          )
+
+          regions = []
+          for name, base, size in pattern.findall(source):
+              start = int(base, 16)
+              length = int(size, 16)
+              if length:
+                  regions.append((start, start + length, name))
+
+          regions.sort()
+
+          print("UEFI DDR memory-map interval audit")
+          print("==================================")
+
+          errors = 0
+          for start, end, name in regions:
+              print(f"{name:20s} {start:#010x} - {end:#010x} ({end-start:#x})")
+
+          for previous, current in zip(regions, regions[1:]):
+              if current[0] < previous[1]:
+                  print(
+                      "OVERLAP:",
+                      previous[2],
+                      "and",
+                      current[2],
+                      file=sys.stderr
+                  )
+                  errors += 1
+
+          print()
+          print("Regions inspected:", len(regions))
+          print("Overlaps:", errors)
+
+          if errors:
+              sys.exit(1)
+          PY
+
+      - name: Audit BootShim and payload configuration
+        shell: bash
+        run: |
+          {
+            echo "=== Payload address definitions ==="
+            grep -nE 'PAYLOAD_BASE|XNU_PAYLOAD_BASE|XNU_PAYLOAD_MAX_SIZE' \
+              devices/taoyao/uefi/mu-silicium.patch \
+              devices/taoyao/uefi/files/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/XnuLoader.h \
+              xnuloader/loader.c \
+              mkxnuimg.py || true
+
+            echo
+            echo "=== Payload format and bounds checks ==="
+            grep -nE 'XNUP|Header->Size|Entry->Size|LoadImage|PAYLOAD_MAX' \
+              devices/taoyao/uefi/files/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/XnuLoader.c \
+              xnuloader/mkpayload.py \
+              xnuloader/loader.c || true
+
+            echo
+            echo "=== UEFI FD configuration ==="
+            grep -nE 'FD_BASE|FD_SIZE|base =|size =' \
+              devices/taoyao/uefi/files/Resources/Configs/taoyao.toml \
+              devices/taoyao/uefi/README.md || true
+          } | tee audit-output/bootshim-audit.txt
+
+      - name: Audit loader platform selection and storage writes
+        shell: bash
+        run: |
+          {
+            echo "=== Platform declarations ==="
+            grep -nE 'static const struct platform platform_' \
+              xnuloader/loader.c || true
+
+            echo
+            echo "=== Platform selection ==="
+            grep -nE 'platform_redwood|platform_taoyao|SCREEN.base|PLAT =' \
+              xnuloader/loader.c || true
+
+            echo
+            echo "=== Stage-0 raw partition writes ==="
+            grep -nE 'XNU_LOG_PARTITION|WriteBlocks|FlushLog|WriteSize' \
+              devices/taoyao/uefi/files/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/XnuLoader.c \
+              || true
+
+            echo
+            echo "=== Main loader log write controls ==="
+            grep -nE 'logdump_write_enabled|no_logdump|logdump=1|write_logs' \
+              xnuloader/loader.c || true
+          } | tee audit-output/loader-audit.txt
+
+      - name: Fetch pinned Apple XNU source
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash xnu/apply.sh "$XNU_SRC"
+          git -C "$XNU_SRC" rev-parse HEAD \
+            | tee audit-output/xnu-commit.txt
+
+      - name: Audit native XNU machine support
+        shell: bash
+        run: |
+          set -u
+
+          {
+            echo "=== XNU machine configurations ==="
+            find "$XNU_SRC/config" -type f \
+              -name 'MASTER.arm64.*' -print | sort || true
+
+            echo
+            echo "=== taoyao machine configuration ==="
+            if [ -f "$XNU_SRC/config/MASTER.arm64.taoyao" ]; then
+              echo "FOUND MASTER.arm64.taoyao"
+            else
+              echo "BLOCKED: MASTER.arm64.taoyao is missing"
+            fi
+
+            echo
+            echo "=== Build target ==="
+            grep -nE 'MACHINE_CONFIGS|MACHINE:-|ARCH_CONFIGS' \
+              xnu-build.sh || true
+
+            echo
+            echo "=== Board configuration definitions ==="
+            grep -RInE 'ARM64_BOARD_CONFIG|BCM2837|SM7325|taoyao' \
+              "$XNU_SRC/pexpert" "$XNU_SRC/config" \
+              --include='*.h' --include='*.c' --include='*.make' \
+              2>/dev/null | head -n 300 || true
+
+            echo
+            echo "=== Page granule assumptions ==="
+            grep -RInE '__ARM_16K_PG__|ARM_PGSHIFT|ARM_PGBYTES|PAGE_SHIFT|PAGE_SIZE' \
+              "$XNU_SRC/osfmk/arm64" "$XNU_SRC/pexpert" \
+              --include='*.h' --include='*.c' \
+              2>/dev/null | head -n 200 || true
+
+            echo
+            echo "=== Dependency board flags ==="
+            grep -nE 'ARM64_BOARD_CONFIG|BCM2837' \
+              xnu-deps/setup.sh || true
+
+            echo
+            echo "=== Interrupt and CPU initialization ==="
+            grep -RInE 'GICv3|gic_v3|PSCI|psci|CNTFRQ|timer|PE_init_cpu|pmap_bootstrap' \
+              "$XNU_SRC/osfmk/arm64" "$XNU_SRC/pexpert" \
+              --include='*.h' --include='*.c' \
+              2>/dev/null | head -n 300 || true
+          } | tee audit-output/xnu-platform-audit.txt
+
+      - name: Generate final assessment
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "HakiOS taoyao Complete Audit"
+            echo "============================"
+            echo "Repository: $GITHUB_REPOSITORY"
+            echo "Commit: $GITHUB_SHA"
+            echo "Run: $GITHUB_RUN_ID"
+            echo
+            echo "This workflow performs source and metadata inspection only."
+            echo "It does not compile or flash a kernel."
+            echo
+            echo "A native taoyao port requires verified SM7325 XNU machine support."
+            echo "A successful UEFI build is not proof of a successful XNU boot."
+            echo
+            echo "Review all audit-output files before changing build targets."
+          } | tee audit-output/FINAL-ASSESSMENT.txt
+
+      - name: Upload complete audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hakios-taoyao-complete-audit-${{ github.run_id }}
+          path: audit-output/
+          if-no-files-found: warn
+          retention-days: 14
