@@ -19,7 +19,7 @@ The existing XNU build wrapper defaults `MACHINE` to `BCM2837` and passes that v
 
 A successful build of that target is **not** evidence of a native SM7325/taoyao kernel. Do not rename a BCM2837 kernel artifact and treat it as a taoyao build.
 
-Before enabling a device build, the project needs a real XNU machine/platform configuration for SM7325, including the board-specific early boot path. A device README, device-tree extraction, UEFI port, or peripheral driver overlay alone does not provide that support.
+A compile-only `SM7325` XNU machine scaffold now exists under `xnu/files/`. It is intentionally limited to one CPU and does not implement Qualcomm secondary-core startup or a complete native platform path. A successful compile is not evidence that the kernel can boot on taoyao.
 
 ## Required platform work
 
@@ -69,7 +69,7 @@ The UEFI project contains taoyao-specific memory-map definitions and peripheral 
 ## Safe development gates
 
 - [ ] Pin and record the exact XNU source commit.
-- [ ] Add a real SM7325/taoyao XNU machine configuration.
+- [x] Add a conservative, single-core SM7325 XNU compile scaffold.\n- [ ] Replace the scaffold with a validated native SM7325/taoyao platform implementation.
 - [ ] Prove CPU topology and architectural feature support.
 - [ ] Prove GIC, PSCI, and timer configuration.
 - [ ] Capture and validate the UEFI memory map.
