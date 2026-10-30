@@ -11,7 +11,7 @@ The following values are present in the Linux upstream SM7325 common device-tree
 | Item | Upstream reference | Status for this project |
 |---|---:|---|
 | CPU nodes | 8 (`cpu@0` through `cpu@700`) | Confirmed in live handset DTB |
-| CPU compatible | `qcom,kryo` | Confirmed in live DTB; exact core MIDRs still unverified |
+| CPU compatible | `qcom,kryo` | Confirmed in live DTB; runtime MIDRs now identify A55/A78 cores |
 | Root compatible | `qcom,yupik-idp`, `qcom,yupik`, `qcom,idp` | Confirmed in live handset DTB |
 | GIC | GICv3 | Confirmed in live handset DTB |
 | GICD | `0x17A00000`, size `0x10000` | Confirmed in live handset DTB |
@@ -40,14 +40,14 @@ Source: user-supplied `/sys/firmware/fdt` capture, collected with `collect-live-
 
 - Root model: `taoyao based Qualcomm Technologies, Inc. Yupik IDP + PM7250B`.
 - CPU nodes: eight, MPIDR `reg` affinity values `0x0` through `0x700` in `0x100` steps; all declare `compatible = "qcom,kryo"` and `enable-method = "psci"`.
-- CPU map: three clusters with 4 + 3 + 1 cores. This is the DT CPU-map grouping, not proof that XNU can schedule the heterogeneous clusters. MIDR values are not supplied by this DTB.
+- CPU map: three clusters with 4 + 3 + 1 cores. This is the DT CPU-map grouping, not proof that XNU can schedule the heterogeneous clusters. MIDR values are not supplied by this DTB; separate live Linux sysfs reads later identified Cortex-A55/A78 implementations.
 - GICv3: GICD `0x17A00000/0x10000`; GICR `0x17A60000/0x100000`.
 - PSCI: `arm,psci-1.0`, conduit `smc`.
 - Architected timer: PPIs 13, 14, 11, 12; `clock-frequency = 19200000` Hz. The interrupt flags in the DTB are `0xff08` for each listed interrupt.
 - RAM banks (base, size): `0x80000000/0x39700000`, `0xC0000000/0xC0000000`, and `0x180000000/0x100000000`.
 - Reserved-memory includes fixed no-map regions for hypervisor/firmware, WLAN, CDSP, camera, ADSP, modem (`mpss`), video/CVP, trusted VM, QRTR, and other secure/platform services, plus dynamically sized reusable CMA/display/QSEE regions. The full live DTB must remain the source of truth for exact ranges and phandles.
 
-**Bring-up consequence:** preserve the 4+3+1 topology as observed metadata, but keep XNU at `MAX_CPUS=1`. Do not derive core implementation IDs from `qcom,kryo`; collect per-core MIDR/feature registers from a trusted runtime diagnostic before implementing CPU feature selection. Do not construct a usable-RAM allocator from the three RAM banks alone; reconcile every reserved region with the UEFI memory map immediately before `ExitBootServices()`.
+**Bring-up consequence:** preserve the 4+3+1 topology as observed metadata, but keep XNU at `MAX_CPUS=1`. Do not derive core implementation IDs from `qcom,kryo`. Separate live Linux sysfs diagnostics identified Cortex-A55/A78 MIDRs, but the queried `id_aa64*` feature-register files were unavailable; collect and validate architectural feature registers before implementing CPU feature selection. Do not construct a usable-RAM allocator from the three RAM banks alone; reconcile every reserved region with the UEFI memory map immediately before `ExitBootServices()`.
 
 
 ## 2B. Live CPU MIDR and cpufreq findings (2026-10-30)
