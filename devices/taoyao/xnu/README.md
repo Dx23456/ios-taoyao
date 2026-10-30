@@ -11,7 +11,7 @@
 - PMIC: PM7250B
 - XNU baseline under investigation: `xnu-8796.121.2`
 
-Hardware facts in this document are leads for validation, not a substitute for runtime measurements from the exact device and boot firmware.
+Hardware facts in this document are leads for validation, not a substitute for runtime measurements from the exact device and boot firmware. The committed DTB snapshot identifies Yupik IDP and reports eight Kryo CPU nodes, GICv3, PSCI SMC, and timer PPIs 13/14/11/12; the final PPI differs from the upstream generic timer list (10).
 
 ## Current build limitation
 
