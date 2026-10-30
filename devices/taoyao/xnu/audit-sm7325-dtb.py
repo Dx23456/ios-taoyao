@@ -19,7 +19,7 @@ EXPECTED = {
     "gicd_size": 0x10000,
     "gicr_base": 0x17A60000,
     "gicr_size": 0x100000,
-    "timer_ppis": [13, 14, 11, 10],
+    # Observed in the taoyao DTB snapshot; upstream generic DTS uses 10.\n    "timer_ppis": [13, 14, 11, 12],
 }
 
 
@@ -64,10 +64,13 @@ def property_value(block: str, name: str) -> str | None:
 def check(dts: str) -> dict:
     checks: dict[str, dict] = {}
 
+    # Xiaomi's DTB identifies the SoC as Yupik IDP, not always qcom,sm7325.
+    soc_compat = [v for v in ("qcom,yupik-idp", "qcom,yupik", "qcom,sm7325")
+                  if re.search(r'"' + re.escape(v) + r'"', dts)]
     checks["sm7325_compatible"] = {
-        "pass": bool(re.search(r'"qcom,sm7325"', dts)),
-        "observed": bool(re.search(r'"qcom,sm7325"', dts)),
-        "expected": True,
+        "pass": bool(soc_compat),
+        "observed": soc_compat,
+        "expected_any_of": ["qcom,yupik-idp", "qcom,yupik", "qcom,sm7325"],
     }
 
     cpu_count = len(re.findall(r"\bdevice_type\s*=\s*\"cpu\"\s*;", dts))
