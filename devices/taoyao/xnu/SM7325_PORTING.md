@@ -82,3 +82,14 @@ Do not set `ARM64_BOARD_CONFIG_SM7325`, copy Apple CPU feature macros, or enable
 - Boot image workflow: packages a USB-resident loader image, a minimal HakiOS `root.apfs`, the loader, and the SM7325 kernel artifact.
 - Full iOS root system: not included. A matching iOS IPSW extraction is required to build `userland/system.apfs`.
 - Native handset boot: NOT tested; this is a bring-up package, not a bootable iOS ROM.
+
+## Collect the actual running taoyao DTB
+
+The committed DTB is a reference snapshot, not proof of the device tree passed by your currently installed firmware. Before enabling more hardware, collect the live tree from the phone:
+
+```sh
+su
+sh devices/taoyao/xnu/collect-live-dtb.sh /sdcard/taoyao-live.dtb
+```
+
+The collector only reads `/sys/firmware/fdt` (or decompiles `/proc/device-tree` if `dtc` is installed) and writes a copy to shared storage. It does not flash or modify boot partitions. Upload `/sdcard/taoyao-live.dtb` to the repository issue/chat for inspection. The live tree is needed to confirm CPU topology, GIC redistributor ranges, timer PPIs, PSCI, RAM banks, and reserved-memory carveouts before changing the one-CPU limit or generating a device boot profile.
