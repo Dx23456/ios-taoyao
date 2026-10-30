@@ -1,0 +1,92 @@
+
+name: HakiOS taoyao XNU Target Audit
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "xnu/**"
+      - "devices/taoyao/**"
+      - "xnu-build.sh"
+      - ".github/workflows/hakios-taoyao-xnu-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit SM7325 XNU target
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check required project files
+        shell: bash
+        run: |
+          set -eu
+
+          for f in \
+            xnu-build.sh \
+            xnu/apply.sh \
+            xnu/README.md \
+            devices/taoyao/README.md \
+            devices/taoyao/uefi/files/Platforms/Xiaomi/taoyaoPkg/taoyao.dsc \
+            devices/taoyao/uefi/files/Platforms/Xiaomi/taoyaoPkg/Library/MemoryMapLib/MemoryMapLib.c
+          do
+            if [ ! -f "$f" ]; then
+              echo "MISSING: $f"
+              exit 1
+            fi
+            echo "FOUND: $f"
+          done
+
+      - name: Audit XNU machine selection
+        shell: bash
+        run: |
+          set -eu
+
+          mkdir -p audit-output
+
+          {
+            echo "HakiOS taoyao XNU audit"
+            echo "Commit: $GITHUB_SHA"
+            echo "Date: $(date -u)"
+            echo
+            echo "=== Build script machine selection ==="
+            grep -nE 'MACHINE_CONFIGS|MACHINE:-' xnu-build.sh || true
+
+            echo
+            echo "=== Existing platform references ==="
+            grep -RniE 'SM7325|taoyao|BCM2837' \
+              xnu devices/taoyao \
+              --include='*.c' \
+              --include='*.h' \
+              --include='*.py' \
+              --include='*.sh' \
+              --include='*.dsc' \
+              --include='*.inf' \
+              2>/dev/null || true
+          } | tee audit-output/target-audit.txt
+
+      - name: Check for unsafe BCM2837 default
+        shell: bash
+        run: |
+          set -eu
+
+          if grep -q 'MACHINE:-BCM2837' xnu-build.sh; then
+            echo "BLOCKED: XNU build still defaults to BCM2837."
+            echo "A native taoyao machine configuration has not been verified."
+            echo "Do not package this output as a taoyao kernel."
+          else
+            echo "BCM2837 default not detected."
+            echo "Manual verification of the native target is still required."
+          fi
+
+      - name: Save audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: taoyao-xnu-target-audit
+          path: audit-output/
+          if-no-files-found: error
