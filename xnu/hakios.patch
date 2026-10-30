@@ -1898,6 +1898,7 @@ index 5bd6f23dd10c..252d50062da4 100644
  MACHINE_FLAGS_ARM64_VMAPPLE = -DARM64_BOARD_CONFIG_VMAPPLE              -march=armv8.5a
 -MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837
 +MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837 -Xclang -target-feature -Xclang +pan
++MACHINE_FLAGS_ARM64_SM7325 = -DARM64_BOARD_CONFIG_SM7325 -march=armv8.2-a+pan
  
  
  #
@@ -3297,6 +3298,18 @@ index c84b2100bc19..aaad5cd2e8c6 100644
  #define MAX_CPU_CLUSTERS               1
  
  #define CORE_NCTRS                     8 /* Placeholder; KPC is not enabled for this target */
+@@ -98,6 +98,14 @@
+ #endif  /* ARM64_BOARD_CONFIG_BCM2837 */
+ 
++#ifdef ARM64_BOARD_CONFIG_SM7325
++#include <pexpert/arm64/SM7325.h>
++#define MAX_L2_CLINE                   6
++#define MAX_CPUS                       1 /* single-core bring-up until PSCI SMP is implemented */
++#define MAX_CPU_CLUSTERS               1
++#endif  /* ARM64_BOARD_CONFIG_SM7325 */
++
+ #ifdef ARM64_BOARD_CONFIG_VMAPPLE
+
 diff --git a/security/mac_vfs_subr.c b/security/mac_vfs_subr.c
 index 97028c06bb92..0daad830d0c0 100644
 --- a/security/mac_vfs_subr.c
@@ -3339,3 +3352,20 @@ index 3ebc295117a3..de101eafc83b 100755
  def find_non_ascii(s):
      for c in s:
          if ord(c) >= 0x80: return True
+
+diff --git a/osfmk/arm64/proc_reg.h b/osfmk/arm64/proc_reg.h
+--- a/osfmk/arm64/proc_reg.h
++++ b/osfmk/arm64/proc_reg.h
+@@ -205,6 +205,11 @@
+ /* D-Cache, 160KB for Firestorm, 8-way. 64KB for Icestorm, 6-way. */
+ #define MMU_CLINE   6                      /* cache line size is 1<<MMU_CLINE (64) */
+ 
++#elif defined (SM7325)
++
++/* Kryo 670 A55/A78-class cores: architectural cache line size is 64 bytes. */
++#define MMU_I_CLINE 6
++#define MMU_CLINE   6
++
+ #elif defined (BCM2837) /* Raspberry Pi 3 */
+ 
+ /* I-Cache. We don't have detailed spec so we just follow the ARM technical reference. */
