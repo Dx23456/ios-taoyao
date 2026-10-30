@@ -155,6 +155,7 @@ jobs:
             echo "xnu: $XNU_TAG"
             echo "built: $(date -u '+%Y-%m-%d %H:%M UTC')"
           } > out/BUILD-INFO.txt
+          python3 tools/audit-taoyao-artifacts.py --dir out
           cd out
           find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
           cat SHA256SUMS
