@@ -44,9 +44,7 @@ jobs:
       - name: Reclaim standard-runner disk space
         run: |
           set -euo pipefail
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \\
-            /usr/local/share/powershell /usr/local/share/chromium \\
-            /usr/local/doc/cmake 2>/dev/null || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/local/share/chromium /usr/local/doc/cmake 2>/dev/null || true
           sudo apt-get clean
           df -h /
 
@@ -142,6 +140,9 @@ jobs:
           mkdir -p out
           CHECK=1 XNU_KERNEL="$PWD/$KERNEL_BIN" OUT="$PWD/out/taoyao" bash tools/build-taoyao-image.sh
           cp out/taoyao/xnu-taoyao-loader.img out/xnu-taoyao-loader.img
+          # boot.img is an alias for the same Android boot-v1 USB-loader container.
+          # It is NOT a native iOS image and must not be flashed as a normal Android boot image.
+          cp out/taoyao/xnu-taoyao-loader.img out/boot.img
           cp out/taoyao/taoyao-usb.xnup out/taoyao-usb.xnup
           mkdir -p out/prebuilt out/xnuloader out/userland
           # Keep the canonical files at the package root for the auditor and
