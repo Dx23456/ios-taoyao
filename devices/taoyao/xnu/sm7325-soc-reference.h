@@ -2,10 +2,11 @@
  * Xiaomi 12 Lite (taoyao / L9B) - Qualcomm SM7325 reference data.
  *
  * SOURCE: Linux upstream SM7325/Kodiak device-tree common files.
- * These are SoC-level reference values, NOT yet validated against the live
- * DTB/firmware of a Xiaomi 12 Lite. Do not include this header in XNU platform
- * code or use these addresses for MMIO until audit-sm7325-dtb.py passes on a
- * DTB captured from the exact handset and each value is independently checked.
+ * These are SoC-level reference values, NOT XNU platform constants. The
+ * repository's taoyao DTB snapshot reports timer PPIs 13/14/11/12 (PPI 12
+ * instead of upstream generic PPI 10). Keep upstream values here distinct
+ * from board-snapshot observations until the live phone DTB and timer
+ * routing are independently validated. Do not use these values for MMIO.
  *
  * This file intentionally does not define XNU board_config feature macros.
  */
