@@ -100,7 +100,7 @@ def audit_xnup(path: pathlib.Path, report: list[str]) -> dict[str, bytes]:
         require(reserved == 0, f"XNUP entry {name} has nonzero reserved field")
         start = pos + 24
         end = start + size
-        aligned_end = (end + 15) & ~15
+        aligned_end = start + ((size + 15) & ~15)
         require(end <= len(data) and aligned_end <= len(data), f"XNUP entry {name} exceeds payload bounds")
         require(not any(data[end:aligned_end]), f"XNUP entry {name} has nonzero alignment padding")
         entries[name] = data[start:end]
