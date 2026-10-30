@@ -73,3 +73,12 @@ This is deliberately a **single-core bring-up profile** (`MAX_CPUS=1`). The seco
 ## 4. Safety rule
 
 Do not set `ARM64_BOARD_CONFIG_SM7325`, copy Apple CPU feature macros, or enable a taoyao kernel build merely to make the build system accept the machine name. The BCM2837 target remains a separate reference smoke test. No device boot should be attempted until the native XNU path is implemented, compiled, and reviewed.
+
+## Build and boot-chain status
+
+- XNU `xnu-8796.121.2`: CI compile passes for `DEVELOPMENT_ARM64_SM7325`, ARM64 Mach-O output, one CPU.
+- Generic GICv3 and PSCI source files are linked; secondary CPU startup remains disabled by `MAX_CPUS=1`.
+- UEFI loader: CI compile passes; taoyao profile requires a matching EFI FDT configuration table and fails closed without it.
+- Boot image workflow: packages a USB-resident loader image, a minimal HakiOS `root.apfs`, the loader, and the SM7325 kernel artifact.
+- Full iOS root system: not included. A matching iOS IPSW extraction is required to build `userland/system.apfs`.
+- Native handset boot: NOT tested; this is a bring-up package, not a bootable iOS ROM.
