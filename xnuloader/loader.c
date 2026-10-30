@@ -2693,16 +2693,31 @@ print_memory_map(void)
 		print("GetMemoryMap failed\n");
 		return;
 	}
+	if (desc_size < sizeof(efi_memory_descriptor) || desc_size == 0 ||
+	    map_size > sizeof(map_buf) || map_size % desc_size != 0) {
+		print("invalid UEFI memory map descriptor layout\n");
+		return;
+	}
 	memset(totals, 0, sizeof(totals));
 	print("memory map (type 7 = free, 1/2 = loader, 3/4 = boot services, 5/6 = runtime, 0 = reserved):\n");
 	for (uint64_t off = 0; off < map_size; off += desc_size) {
 		efi_memory_descriptor *d = (efi_memory_descriptor *)(map_buf + off);
+		uint64_t bytes;
 
-		if (d->type < 16) {
-			totals[d->type] += d->pages << 12;
+		if (d->pages > (~0ULL >> 12)) {
+			print("  skipping descriptor with overflowing page count\n");
+			continue;
 		}
-		if (d->pages >= 256) {
-			print("  %x - %x  type %d  %d MB\n", d->phys_start, d->phys_start + (d->pages << 12), (uint64_t)d->type,
+		bytes = d->pages << 12;
+		if (d->type < 16) {
+			if (totals[d->type] > ~0ULL - bytes) {
+				totals[d->type] = ~0ULL;
+			} else {
+				totals[d->type] += bytes;
+			}
+		}
+		if (d->pages >= 256 && d->phys_start <= ~0ULL - bytes) {
+			print("  %x - %x  type %d  %d MB\n", d->phys_start, d->phys_start + bytes, (uint64_t)d->type,
 			    d->pages >> 8);
 		}
 	}
