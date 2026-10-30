@@ -10,13 +10,15 @@ The following values are present in the Linux upstream SM7325 common device-tree
 
 | Item | Upstream reference | Status for this project |
 |---|---:|---|
-| CPU nodes | 8 (`cpu0` through `cpu7`) | SoC DTS reference; verify against live taoyao DTB |
-| CPU compatible | `qcom,kryo670` | SoC DTS reference |
-| GIC | GICv3 | SoC DTS reference |
-| GICD | `0x17A00000`, size `0x10000` | SoC DTS reference; not yet runtime-verified |
-| GICR | `0x17A60000`, size `0x100000` | SoC DTS reference; not yet runtime-verified |
-| PSCI conduit | `smc` | SoC DTS reference; firmware behavior not yet probed |
-| Architected timer PPIs | 13, 14, 11, 10 | SoC DTS reference; confirm live DTB and XNU interrupt semantics |
+| CPU nodes | 8 (`cpu@0` through `cpu@700`) | Observed in repository DTB snapshot |
+| CPU compatible | `qcom,kryo` | Generic Qualcomm compatible; exact core MIDRs still unverified |
+| Root compatible | `qcom,yupik-idp`, `qcom,yupik`, `qcom,idp` | Observed in repository DTB snapshot |
+| GIC | GICv3 | Observed in repository DTB snapshot |
+| GICD | `0x17A00000`, size `0x10000` | Observed in repository DTB snapshot |
+| GICR | `0x17A60000`, size `0x100000` | Observed in repository DTB snapshot |
+| PSCI conduit | `smc` | Observed in DTB; PSCI calls still need runtime probing |
+| Architected timer PPIs | 13, 14, 11, **12** | Observed in DTB; differs from upstream generic list's final PPI 10 |
+| Timer frequency | `0x124F800` (19.2 MHz) | Observed in DTB; verify counter frequency at runtime |
 
 Sources (file blob IDs are recorded so the exact upstream inputs can be rechecked):
 
