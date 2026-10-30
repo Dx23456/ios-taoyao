@@ -1,0 +1,29 @@
+name: SM7325 DTB auditor self-test (reference only)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'work/**']
+    paths:
+      - 'devices/taoyao/xnu/**'
+      - '.github/workflows/hakios-taoyao-sm7325-dtb-audit.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'devices/taoyao/xnu/**'
+      - '.github/workflows/hakios-taoyao-sm7325-dtb-audit.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit-self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python syntax
+        run: python3 -m py_compile devices/taoyao/xnu/audit-sm7325-dtb.py
+      - name: Test auditor against synthetic reference fixture
+        run: |
+          python3 devices/taoyao/xnu/audit-sm7325-dtb.py \
+            devices/taoyao/xnu/tests/fixtures/sm7325-reference.dts
