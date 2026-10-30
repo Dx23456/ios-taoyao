@@ -45,7 +45,19 @@ python3 devices/taoyao/xnu/audit-sm7325-dtb.py taoyao-live.dtb
 
 The audit checks the SoC compatible, eight CPU nodes, GICv3 ranges, PSCI SMC declaration and architected timer interrupt list against the upstream common-DTS reference. A mismatch is a stop condition: investigate the live DTB rather than overriding it with a guessed constant.
 
-## 3. What must exist before an XNU board configuration is enabled
+## 3. Current XNU machine scaffold
+
+The repository now contains a compile-only XNU machine configuration:
+
+- `xnu/files/config/MASTER.arm64.sm7325`
+- `xnu/files/pexpert/pexpert/arm64/SM7325.h`
+- `MACHINE_FLAGS_ARM64_SM7325` in the HakiOS XNU patch
+- A SM7325 cache-line branch in XNU's ARM64 register header
+- A separate GitHub Actions build workflow for the SM7325 target
+
+This is deliberately a **single-core bring-up profile** (`MAX_CPUS=1`). The secondary CPU/PSCI path is not implemented, and the target is not safe to boot on the handset. The compile workflow labels any output as a scaffold and records `native_taoyao_bootable: NO`.
+
+## 4. What must exist before native XNU boot support
 
 1. **CPU implementation:** XNU 8796's ARM64 board configuration selects Apple-specific CPU implementation headers for its existing Apple targets. SM7325's Kryo 670 combines Cortex-A55/A78-class cores; it must not inherit H13/H11 or BCM2837 CPU feature/workaround definitions. Implement and test a Qualcomm-compatible CPU feature path, including safe ID-register discovery and feature intersection.
 2. **Topology:** derive MPIDR affinity values and scheduler cluster semantics from the live DTB and hardware. Eight logical CPU nodes alone do not establish XNU's `MAX_CPU_CLUSTERS` or AMP configuration.
@@ -54,7 +66,7 @@ The audit checks the SoC compatible, eight CPU nodes, GICv3 ranges, PSCI SMC dec
 5. **Timer:** validate the architectural counter frequency and PPI routing; confirm XNU's timer programming and interrupt masking semantics.
 6. **MMU and memory:** validate 4 KiB versus 16 KiB translation granule, physical address width, cache coherency, RAM banks, secure-world/modem/DSP carveouts and UEFI payload reservations.
 7. **Boot ABI:** implement the exact XNU 8796 `boot_args`, device-tree handoff, kernel Mach-O mappings, cache maintenance and `ExitBootServices()` lifecycle.
-8. **Build integration:** add a real `MACHINE_CONFIGS=SM7325` configuration and XNU pexpert board header only after the above CPU/platform interfaces exist. The current build wrapper correctly rejects an absent machine configuration.
+8. **Build integration:** expand the compile-only `MACHINE_CONFIGS=SM7325` scaffold into a validated platform implementation only after the above CPU/platform interfaces exist. Do not raise `MAX_CPUS` until secondary-core startup and interrupt routing are implemented.
 
 ## 4. Safety rule
 
