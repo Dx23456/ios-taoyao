@@ -7,6 +7,7 @@ on:
     paths:
       - 'xnuloader/**'
       - 'tools/build-taoyao-image.sh'
+      - 'tools/build-ios16.5-userland.sh'
       - 'mkxnuimg.py'
       - '.github/workflows/validate-taoyao-loader.yml'
   pull_request:
@@ -32,7 +33,7 @@ jobs:
       - name: Validate scripts
         run: |
           set -euo pipefail
-          bash -n xnuloader/build.sh tools/build-taoyao-image.sh
+          bash -n xnuloader/build.sh tools/build-taoyao-image.sh tools/build-ios16.5-userland.sh
           python3 -m py_compile xnuloader/mkpayload.py xnuloader/mkidentity.py mkxnuimg.py
       - name: Build freestanding ARM64 UEFI loader
         run: |
