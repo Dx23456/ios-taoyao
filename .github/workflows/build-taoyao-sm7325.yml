@@ -149,6 +149,7 @@ jobs:
             echo "image_format: Android boot image v1; loader enters fastboot USB mode"
             echo "kernel: separate mach.development.sm7325 artifact; uploaded by ./xl run"
             echo "small_root: root.apfs built from repository prebuilt userland"
+            echo "root_apfs_integrity: CHECK=1 (apfsck + XNU apfs_lib read-back)"
             echo "system_apfs: NOT included; requires compatible iOS IPSW extraction"
             echo "cpu_limit: 1 (single-core bring-up profile)"
             echo "native_taoyao_bootable: NO"
@@ -160,7 +161,7 @@ jobs:
             echo "xnu: $XNU_TAG"
             echo "built: $(date -u '+%Y-%m-%d %H:%M UTC')"
           } > out/BUILD-INFO.txt
-          python3 tools/audit-taoyao-artifacts.py --dir out
+          python3 tools/audit-taoyao-artifacts.py --dir out --apfs-checked
           cd out
           find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
           # Verify every packaged file against the manifest before upload.
