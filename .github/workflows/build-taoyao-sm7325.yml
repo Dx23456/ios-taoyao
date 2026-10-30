@@ -15,11 +15,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: hakios-sm7325-\${{ github.ref }}
+  group: hakios-sm7325-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  THEOS: \${{ github.workspace }}/theos
+  THEOS: ${{ github.workspace }}/theos
   XNU_TAG: xnu-8796.121.2
   MACHINE: SM7325
   KERNEL_BIN: xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_SM7325/mach.development.sm7325
@@ -46,7 +46,7 @@ jobs:
         id: theos
         uses: actions/cache@v4
         with:
-          path: \${{ env.THEOS }}
+          path: ${{ env.THEOS }}
           key: theos-linux-x86_64-v1
 
       - name: Install Theos (Linux cctools + iPhoneOS 16.5 SDK)
@@ -69,7 +69,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: xnu-src
-          key: xnu-sm7325-\${{ env.XNU_TAG }}-\${{ hashFiles('xnu/hakios.patch') }}-\${{ hashFiles('xnu/files/**') }}
+          key: xnu-sm7325-${{ env.XNU_TAG }}-${{ hashFiles('xnu/hakios.patch') }}-${{ hashFiles('xnu/files/**') }}
 
       - name: Apply HakiOS SM7325 XNU Overlay
         if: steps.xnu-src.outputs.cache-hit != 'true'
@@ -109,7 +109,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: xnu-sm7325-build-logs-\${{ github.sha }}
+          name: xnu-sm7325-build-logs-${{ github.sha }}
           path: |
             xnu-deps/exporthdrs.log
             xnu-deps/mig-build.log
@@ -128,8 +128,8 @@ jobs:
             echo "machine: SM7325"
             echo "cpu_limit: 1 (secondary CPU / PSCI path not implemented)"
             echo "native_taoyao_bootable: NO"
-            echo "repo: \${{ github.repository }}"
-            echo "commit: \${{ github.sha }}"
+            echo "repo: ${{ github.repository }}"
+            echo "commit: ${{ github.sha }}"
             echo "xnu: $XNU_TAG"
             echo "built: $(date -u '+%Y-%m-%d %H:%M UTC')"
           } > out/BUILD-INFO.txt
@@ -141,6 +141,6 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: hakios-sm7325-single-core-scaffold-\${{ env.XNU_TAG }}-\${{ github.sha }}
+          name: hakios-sm7325-single-core-scaffold-${{ env.XNU_TAG }}-${{ github.sha }}
           path: out/
           retention-days: 14
