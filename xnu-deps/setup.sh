@@ -220,6 +220,12 @@ stage2() {
 	log "exporting the kernel's headers (xnu-build.sh exporthdrs)"
 	"$DARWIN_REDWOOD/xnu-build.sh" -j$JOBS exporthdrs > exporthdrs.log 2>&1 && [ -d "$hdrs/osfmk" ] ||
 		die "the kernel headers were not exported, see xnu-deps/exporthdrs.log"
+	# XNU's export list does not know about this out-of-tree board header. Make it
+	# available to all subsequent kernel-library and kernel compilation steps.
+	if [ -f "$XNU_SRC/pexpert/pexpert/arm64/SM7325.h" ]; then
+		mkdir -p "$hdrs/pexpert/pexpert/arm64"
+		cp "$XNU_SRC/pexpert/pexpert/arm64/SM7325.h" "$hdrs/pexpert/pexpert/arm64/SM7325.h"
+	fi
 	if [ ! -f $lib/libfirehose_kernel.a ]; then
 		log "building libfirehose_kernel.a"
 		mkdir -p build/firehose
