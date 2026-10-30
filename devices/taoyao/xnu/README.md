@@ -106,3 +106,16 @@ The SM7325 kernel now compiles as an ARM64 Mach-O with a one-CPU limit. The UEFI
 `tools/build-taoyao-image.sh` assembles an Android boot-image-format **USB-resident loader image**, builds `userland/root.apfs` from the repository's prebuilt HakiOS userland, and stages the SM7325 kernel separately. The loader image enters the custom fastboot command loop; the kernel is uploaded with `./xl run`. A compatible iOS `system.apfs` is not included: it must be built from an extracted iOS IPSW and uploaded with `./xl ramdisk userland/system.apfs`.
 
 This package is not a completed iOS image and is not yet validated to boot on taoyao. Do not flash it as a normal ROM. Use the non-destructive `fastboot boot` / `xl enter` path for bring-up only, and keep a stock recovery path available.
+
+## Using the USB bring-up package
+
+After downloading the CI artifact, extract it into the repository root while preserving its directories. It places the built loader at `xnuloader/loader.efi`, the kernel at `prebuilt/mach.development.sm7325`, and the small APFS image at `userland/root.apfs`.
+
+The intended flow is:
+1. Enter the loader using the non-destructive fastboot boot path (`fastboot boot xnu-taoyao-loader.img`) or `./xl enter`.
+2. If a compatible iOS system image has been built, upload it to the resident area with `./xl ramdisk userland/system.apfs`.
+3. Run the SM7325 kernel with `./xl run`.
+
+For a kernel-only smoke test without a system APFS, the loader supports a small executable as the root payload, for example `XL_RAMDISK=prebuilt/userland/hello ./xl run`. This tests the kernel/loader return path and is not an iOS boot.
+
+The current artifact contains no `system.apfs`. The latter must be built from a compatible iOS 16.5 IPSW extraction; the repository's placeholder identity is not suitable for a real iOS boot.
