@@ -2857,8 +2857,11 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 			const struct segment_command_64 *sg = (const void *)lc;
 			if (sg->filesize > sg->vmsize || sg->fileoff > pi.kernel_size ||
 			    sg->filesize > pi.kernel_size - sg->fileoff ||
-			    sg->vmaddr > ~0ULL - sg->vmsize) {
-				print("invalid Mach-O segment bounds\n");
+			    sg->vmaddr > ~0ULL - sg->vmsize ||
+			    sg->vmaddr < KERNEL_VIRT_BASE ||
+			    sg->vmaddr - KERNEL_VIRT_BASE > MAX_MEM_SIZE ||
+			    sg->vmsize > MAX_MEM_SIZE - (sg->vmaddr - KERNEL_VIRT_BASE)) {
+				print("invalid Mach-O segment bounds/address range\n");
 				return 0;
 			}
 			if (sg->vmsize != 0) {
@@ -2880,8 +2883,10 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		cmd += lc->cmdsize;
 	}
 	print("kernel va %x..%x entry %x\n", vm_lo, vm_hi, entry_va);
-	if (vm_lo < KERNEL_VIRT_BASE + KERNEL_LINK_OFFSET || entry_va == 0) {
-		print("unexpected kernel layout\n");
+	if (vm_lo < KERNEL_VIRT_BASE + KERNEL_LINK_OFFSET || vm_hi <= vm_lo ||
+	    entry_va < vm_lo || entry_va >= vm_hi || vm_hi < KERNEL_VIRT_BASE ||
+	    vm_hi - KERNEL_VIRT_BASE > MAX_MEM_SIZE) {
+		print("unexpected kernel layout or entry point\n");
 		return 0;
 	}
 	if (!choose_window(&pi)) {
@@ -2889,8 +2894,19 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	}
 
 	uint64_t phys_base = win_base;
+	uint64_t kernel_span = vm_hi - KERNEL_VIRT_BASE;
+	if (kernel_span > win_size || phys_base > ~0ULL - kernel_span ||
+	    phys_base + kernel_span > ~0ULL - (PAGE_SIZE_MAX - 1)) {
+		print("kernel virtual range does not fit the claimed physical window\n");
+		return 0;
+	}
 	uint64_t slide = phys_base - KERNEL_VIRT_BASE; /* pa = va + slide */
-	uint64_t kern_lo = vm_lo + slide, kern_hi = (vm_hi + slide + PAGE_SIZE_MAX - 1) & ~(PAGE_SIZE_MAX - 1);
+	uint64_t kern_lo = phys_base + (vm_lo - KERNEL_VIRT_BASE);
+	uint64_t kern_hi = (phys_base + kernel_span + PAGE_SIZE_MAX - 1) & ~(PAGE_SIZE_MAX - 1);
+	if (kern_hi > phys_base + win_size) {
+		print("aligned kernel range exceeds the claimed physical window\n");
+		return 0;
+	}
 	/* The ramdisk must sit inside the kernel's static mapping, i.e. below topOfKernelData. */
 	uint64_t rd_pa = kern_hi;
 	uint64_t rd_size = (pi.ramdisk_size + PAGE_SIZE_MAX - 1) & ~(PAGE_SIZE_MAX - 1);
