@@ -160,6 +160,14 @@ LogMemoryMap ()
   Status = gBS->GetMemoryMap (&MapSize, Map, &MapKey, &DescSize, &DescVersion);
   if (EFI_ERROR (Status)) {
     Log ("getmemorymap status=%r\n", Status);
+    FreePool (Map);
+    return;
+  }
+
+  if (DescSize < sizeof (EFI_MEMORY_DESCRIPTOR) || DescSize == 0 ||
+      MapSize % DescSize != 0) {
+    Log ("invalid memory map descriptor size=%u map_size=%u\n", DescSize, MapSize);
+    FreePool (Map);
     return;
   }
 
@@ -208,7 +216,7 @@ FlushLog ()
   // is disposable; writing there can destroy partition data. Persistent
   // diagnostics require a separately validated offset and partition layout.
   //
-  Log ("[log] persistent writes disabled; log retained in RAM (%u bytes)\n", mLogLen);
+  // No disk writes. The in-memory log remains available until reset.
 }
 
 //
