@@ -78,6 +78,7 @@ jobs:
       - name: Verify SM7325 machine overlay
         run: |
           set -euo pipefail
+          . ./xnu-env.sh
           test -f "$XNU_SRC/config/MASTER.arm64.sm7325"
           test -f "$XNU_SRC/pexpert/pexpert/arm64/SM7325.h"
           grep -q 'MACHINE_FLAGS_ARM64_SM7325' "$XNU_SRC/makedefs/MakeInc.def"
