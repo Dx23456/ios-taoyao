@@ -15,6 +15,7 @@ on:
     paths:
       - 'xnuloader/**'
       - 'tools/build-taoyao-image.sh'
+      - 'tools/build-ios16.5-userland.sh'
       - 'mkxnuimg.py'
       - '.github/workflows/validate-taoyao-loader.yml'
 
