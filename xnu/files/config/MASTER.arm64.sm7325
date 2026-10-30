@@ -81,7 +81,8 @@ machine		"arm64"						# <arm64>
 
 makeoptions	OSFMK_MACHINE = "arm64"				# <mach>
 
-options		NOS_ARM_ASM		# include generic ARM64 platform support\noptions		COUNT_SYSCALLS		# count bsd system calls 	# <countcalls>
+options		NOS_ARM_ASM		# include generic ARM64 platform support
+options		COUNT_SYSCALLS		# count bsd system calls 	# <countcalls>
 options     TRASH_VFP_ON_SAVE   # <debug,trash_vfp>
 options		ALTERNATE_DEBUGGER	# <alternate_debugger>
 
