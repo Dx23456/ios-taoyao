@@ -70,7 +70,7 @@ def check(dts: str) -> dict:
         "expected": True,
     }
 
-    cpu_count = len(re.findall(r'(?m)^\s*device_type\s*=\s*"cpu"\s*;', dts))
+    cpu_count = len(re.findall(r"\\bdevice_type\\s*=\\s*\"cpu\"\\s*;", dts))
     checks["cpu_nodes"] = {
         "pass": cpu_count == EXPECTED["cpu_count"],
         "observed": cpu_count,
