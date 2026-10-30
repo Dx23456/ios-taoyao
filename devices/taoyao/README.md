@@ -111,7 +111,7 @@ Although `taoyao` shares the `PM7250B` PMIC with `lisa`, **do not use `lisaPkg`'
 
 ---
 
-## 4. Building UEFI & Running HakiOS on `taoyao`
+## 4. Building UEFI & Current Boot Status on `taoyao`
 
 1. **Extract `taoyao` XBL UEFI binaries** (`xbl.img` from official Xiaomi `taoyao` firmware via `UEFIReader` — never commit proprietary `.efi` binaries): see [`uefi/files/Binaries/taoyao/README.md`](uefi/files/Binaries/taoyao/README.md).
 2. **Build `SILICIUM_UEFI.fd` and `BootShim.bin`**: see [`uefi/README.md`](uefi/README.md).
