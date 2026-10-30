@@ -4216,11 +4216,11 @@ efi_main(efi_handle image, efi_system_table *st)
 	 * and Yupik compatible string; otherwise retain the QEMU reference path.
 	 */
 	PLAT = is_taoyao ? &platform_taoyao : &platform_qemu_virt;
-	print("EFI DTB=%x taoyao_identity=%d\\n", (uint64_t)(uintptr_t)fdt, (uint64_t)is_taoyao);
+	print("EFI DTB=%x taoyao_identity=%d\n", (uint64_t)(uintptr_t)fdt, (uint64_t)is_taoyao);
 	if (EFI_ERROR(BS->locate_protocol(&gop_guid, NULL, (void **)&GOP)) ||
 	    GOP == NULL || GOP->mode == NULL || GOP->mode->info == NULL ||
 	    GOP->mode->fb_base == 0) {
-		print("no usable GOP: refusing to guess a platform profile\\n");
+		print("no usable GOP: refusing to guess a platform profile\n");
 		reboot();
 	}
 	SCREEN.base = GOP->mode->fb_base;
@@ -4228,16 +4228,16 @@ efi_main(efi_handle image, efi_system_table *st)
 	SCREEN.height = GOP->mode->info->height;
 	SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
 	if (SCREEN.base >= 0x80000000ULL && !is_taoyao) {
-		print("unsupported physical platform fb=%x; no matching EFI DTB identity; refusing kernel start\\n",
+		print("unsupported physical platform fb=%x; no matching EFI DTB identity; refusing kernel start\n",
 		    SCREEN.base);
 		reboot();
 	}
 	ramfb_phone_screen();
-	print("display %d x %d at %x\\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
+	print("display %d x %d at %x\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
 	if (is_taoyao) {
-		print("platform taoyao SM7325 (single-core bring-up profile; native boot not validated)\\n");
+		print("platform taoyao SM7325 (single-core bring-up profile; native boot not validated)\n");
 	} else {
-		print("platform %s (QEMU reference only)\\n", PLAT->name);
+		print("platform %s (QEMU reference only)\n", PLAT->name);
 	}
 
 	install_exception_hook();
