@@ -1,0 +1,105 @@
+name: Build encrypted iOS 16.5 userland images
+
+on:
+  workflow_dispatch:
+    inputs:
+      age_recipient:
+        description: "Your age1... public encryption recipient (never enter your private key)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hakios-ios165-userland-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-userland:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      AGE_RECIPIENT: ${{ inputs.age_recipient }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 1
+
+      - name: Validate encryption recipient
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$AGE_RECIPIENT" =~ ^age1[0-9a-z]+$ ]] || {
+            echo "::error::Enter a valid age1... public recipient. Never provide a private key."
+            exit 1
+          }
+
+      - name: Reclaim runner disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/local/share/chromium /usr/local/doc/cmake 2>/dev/null || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Install build and encryption dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang lld llvm git curl ca-certificates \
+            python3 7zip age libssl-dev zlib1g-dev
+
+      - name: Build donor iOS 16.5 userland and APFS images
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/build-ios16.5-userland.sh
+
+      - name: Encrypt userland images for the owner
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v age
+          test -s userland/root.apfs
+          test -s userland/system.apfs
+          test -s xnuloader/identity.h
+          test -s xnuloader/loader.efi
+          tar -czf /tmp/hakios-ios16.5-userland.tar.gz \
+            userland/root.apfs userland/system.apfs \
+            xnuloader/identity.h xnuloader/loader.efi \
+            userland/taoyao-userland-audit.txt \
+            userland/taoyao-userland-SHA256SUMS
+          age -r "$AGE_RECIPIENT" \
+            -o hakios-ios16.5-userland-${{ github.sha }}.tar.gz.age \
+            /tmp/hakios-ios16.5-userland.tar.gz
+          sha256sum hakios-ios16.5-userland-${{ github.sha }}.tar.gz.age \
+            > hakios-ios16.5-userland-${{ github.sha }}.tar.gz.age.sha256
+          rm -f /tmp/hakios-ios16.5-userland.tar.gz
+          ls -lh hakios-ios16.5-userland-*.age*
+
+      - name: Upload encrypted bundle only
+        uses: actions/upload-artifact@v4
+        with:
+          name: hakios-ios16.5-userland-encrypted-${{ github.sha }}
+          path: |
+            hakios-ios16.5-userland-${{ github.sha }}.tar.gz.age
+            hakios-ios16.5-userland-${{ github.sha }}.tar.gz.age.sha256
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hakios-ios165-userland-build-logs-${{ github.sha }}
+          path: |
+            sysimage/*.log
+            userland/*.log
+            userland/taoyao-userland-audit.txt
+          retention-days: 7
+          if-no-files-found: ignore
