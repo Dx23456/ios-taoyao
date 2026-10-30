@@ -1,0 +1,61 @@
+# SM7325 / taoyao XNU platform bring-up
+
+**Status: platform scaffold and reference-data audit only. This is not a native XNU machine port and does not produce a bootable taoyao kernel.**
+
+Target: Xiaomi 12 Lite, codename `taoyao`, board L9B, Qualcomm SM7325 (Yupik / Kryo 670), PM7250B. XNU baseline: `xnu-8796.121.2`.
+
+## 1. Upstream SoC reference data
+
+The following values are present in the Linux upstream SM7325 common device-tree chain:
+
+| Item | Upstream reference | Status for this project |
+|---|---:|---|
+| CPU nodes | 8 (`cpu0` through `cpu7`) | SoC DTS reference; verify against live taoyao DTB |
+| CPU compatible | `qcom,kryo670` | SoC DTS reference |
+| GIC | GICv3 | SoC DTS reference |
+| GICD | `0x17A00000`, size `0x10000` | SoC DTS reference; not yet runtime-verified |
+| GICR | `0x17A60000`, size `0x100000` | SoC DTS reference; not yet runtime-verified |
+| PSCI conduit | `smc` | SoC DTS reference; firmware behavior not yet probed |
+| Architected timer PPIs | 13, 14, 11, 10 | SoC DTS reference; confirm live DTB and XNU interrupt semantics |
+
+Sources (file blob IDs are recorded so the exact upstream inputs can be rechecked):
+
+- `torvalds/linux:arch/arm64/boot/dts/qcom/sm7325.dtsi`, blob `beb279956df69785682e20f6e99a86243da72e92`. This identifies SM7325 as Kryo 670 and specializes all eight CPU nodes.
+- `torvalds/linux:arch/arm64/boot/dts/qcom/kodiak.dtsi`, blob `8c7523602d2719775b8f5c6a8cef138a93292721`. This supplies the common CPU, PSCI, GICv3 and timer descriptions inherited by the SM7325 DTS.
+
+The taoyao device-tree is the authority for board-specific overrides. Do not assume every upstream common-DTS value is unchanged by Xiaomi's downstream firmware.
+
+The corresponding constants are kept in `sm7325-soc-reference.h`. That header is deliberately reference-only and must not be included by XNU platform code yet.
+
+## 2. Device-tree audit
+
+Capture the live flattened device tree from the exact phone (read-only):
+
+```sh
+adb exec-out su -c 'cat /sys/firmware/fdt' > taoyao-live.dtb
+```
+
+If the device's `/sys/firmware/fdt` is readable without root, omit `su -c`.
+
+Run the audit on a Linux/macOS build host with Device Tree Compiler installed:
+
+```sh
+python3 devices/taoyao/xnu/audit-sm7325-dtb.py taoyao-live.dtb
+```
+
+The audit checks the SoC compatible, eight CPU nodes, GICv3 ranges, PSCI SMC declaration and architected timer interrupt list against the upstream common-DTS reference. A mismatch is a stop condition: investigate the live DTB rather than overriding it with a guessed constant.
+
+## 3. What must exist before an XNU board configuration is enabled
+
+1. **CPU implementation:** XNU 8796's ARM64 board configuration selects Apple-specific CPU implementation headers for its existing Apple targets. SM7325's Kryo 670 combines Cortex-A55/A78-class cores; it must not inherit H13/H11 or BCM2837 CPU feature/workaround definitions. Implement and test a Qualcomm-compatible CPU feature path, including safe ID-register discovery and feature intersection.
+2. **Topology:** derive MPIDR affinity values and scheduler cluster semantics from the live DTB and hardware. Eight logical CPU nodes alone do not establish XNU's `MAX_CPU_CLUSTERS` or AMP configuration.
+3. **Interrupts:** implement the GICv3 platform path using validated GICD/GICR regions, redistributor discovery, SGI/IPI routing and interrupt affinity. Confirm the actual GICR frame layout at runtime.
+4. **PSCI:** query PSCI version/features and test CPU_ON/CPU_OFF using the firmware's SMC conduit. A DTS `method = "smc"` declaration is not proof that every call works in the current boot stage.
+5. **Timer:** validate the architectural counter frequency and PPI routing; confirm XNU's timer programming and interrupt masking semantics.
+6. **MMU and memory:** validate 4 KiB versus 16 KiB translation granule, physical address width, cache coherency, RAM banks, secure-world/modem/DSP carveouts and UEFI payload reservations.
+7. **Boot ABI:** implement the exact XNU 8796 `boot_args`, device-tree handoff, kernel Mach-O mappings, cache maintenance and `ExitBootServices()` lifecycle.
+8. **Build integration:** add a real `MACHINE_CONFIGS=SM7325` configuration and XNU pexpert board header only after the above CPU/platform interfaces exist. The current build wrapper correctly rejects an absent machine configuration.
+
+## 4. Safety rule
+
+Do not set `ARM64_BOARD_CONFIG_SM7325`, copy Apple CPU feature macros, or enable a taoyao kernel build merely to make the build system accept the machine name. The BCM2837 target remains a separate reference smoke test. No device boot should be attempted until the native XNU path is implemented, compiled, and reviewed.
