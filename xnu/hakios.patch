@@ -1892,7 +1892,7 @@ diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
 index 5bd6f23dd10c..252d50062da4 100644
 --- a/makedefs/MakeInc.def
 +++ b/makedefs/MakeInc.def
-@@ -60,7 +60,7 @@ MACHINE_FLAGS_ARM64_T8101 = -DARM64_BOARD_CONFIG_T8101			-mcpu=apple-a14
+@@ -60,7 +60,8 @@ MACHINE_FLAGS_ARM64_T8101 = -DARM64_BOARD_CONFIG_T8101			-mcpu=apple-a14
  MACHINE_FLAGS_ARM64_T8103 = -DARM64_BOARD_CONFIG_T8103                  -mcpu=apple-a14
  MACHINE_FLAGS_ARM64_T6000 = -DARM64_BOARD_CONFIG_T6000 		-mcpu=apple-a14
  MACHINE_FLAGS_ARM64_VMAPPLE = -DARM64_BOARD_CONFIG_VMAPPLE              -march=armv8.5a
@@ -3298,7 +3298,7 @@ index c84b2100bc19..aaad5cd2e8c6 100644
  #define MAX_CPU_CLUSTERS               1
  
  #define CORE_NCTRS                     8 /* Placeholder; KPC is not enabled for this target */
-@@ -98,6 +98,14 @@
+@@ -98,3 +98,10 @@
  #endif  /* ARM64_BOARD_CONFIG_BCM2837 */
  
 +#ifdef ARM64_BOARD_CONFIG_SM7325
@@ -3356,7 +3356,7 @@ index 3ebc295117a3..de101eafc83b 100755
 diff --git a/osfmk/arm64/proc_reg.h b/osfmk/arm64/proc_reg.h
 --- a/osfmk/arm64/proc_reg.h
 +++ b/osfmk/arm64/proc_reg.h
-@@ -205,6 +205,11 @@
+@@ -205,6 +205,12 @@
  /* D-Cache, 160KB for Firestorm, 8-way. 64KB for Icestorm, 6-way. */
  #define MMU_CLINE   6                      /* cache line size is 1<<MMU_CLINE (64) */
  
