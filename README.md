@@ -16,6 +16,23 @@ about it in advance: every address, interrupt, power rail and firmware comes fro
 device tree and its own Android, so a port to another Qualcomm phone is a new directory under
 `devices/`, not a rewrite.
 
+## taoyao port status — this branch
+
+**The taoyao port is an experimental bring-up scaffold, not a bootable iOS build.**
+The current CI target compiles an ARM64 XNU kernel for SM7325, builds an AArch64 UEFI
+loader, and packages a USB-resident loader image plus a minimal test root APFS image.
+The current package does not contain the iOS 16.5 system APFS image, uses a placeholder
+device identity, and has not been boot-tested on the Xiaomi 12 Lite.
+
+The build is deliberately configured for **one CPU**. Secondary-core startup, runtime
+GICv3/PSCI/timer validation, the complete firmware-to-XNU memory handoff, and a proven
+taoyao hardware boot path remain outstanding. A passing CI build or structural artifact
+audit proves neither platform compatibility nor native iOS boot.
+
+Do not use `fastboot flash` with these artifacts. Do not run `fastboot boot` or
+`./xl enter` until the loader configuration and hardware safety preflight have been
+reviewed. Keep the original Android boot chain available for recovery.
+
 ## What is in the repository
 
 Only my code and my data:
