@@ -6,12 +6,13 @@
 # The generated system.apfs contains Apple software and must stay on the user's own machine.
 #
 # Requirements (Ubuntu / WSL2):
-#   build-essential git curl python3 7-Zip >= 23, libssl-dev, zlib1g-dev
+#   build-essential clang lld git curl python3 7-Zip >= 23, libssl-dev, zlib1g-dev
 #   at least 12 GiB free disk space
 #
 # Outputs (ignored by git):
 #   sysimage/                  extracted IPSW contents and donor DeviceTree
 #   xnuloader/identity.h       donor iPhone10,3 identity (generated)
+#   xnuloader/loader.efi       UEFI loader rebuilt with donor identity
 #   userland/root.apfs         minimal HakiOS support volume
 #   userland/system.apfs       iOS 16.5 donor system volume
 #   userland/taoyao-userland-build.log
@@ -25,7 +26,7 @@ cd "$ROOT"
 die() { echo "build-ios16.5-userland: ERROR: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing command '$1'"; }
 
-for cmd in python3 cc git curl make sha256sum df awk grep sed head; do need "$cmd"; done
+for cmd in python3 cc clang lld-link git curl make sha256sum df awk grep sed head; do need "$cmd"; done
 [[ -s prebuilt/userland/stage0 && -s prebuilt/userland/init ]] || \
   die "prebuilt/userland stage0/init binaries are missing"
 
@@ -51,11 +52,15 @@ free_kib="$(df -Pk . | awk 'NR==2 {print $4}')"
 echo "[1/4] Fetch and extract the public iOS 16.5 (20F66) iPhone10,3 IPSW members"
 bash sysimage/fetch.sh 2>&1 | tee sysimage/taoyao-ipsw-fetch.log
 
-echo "[2/4] Generate the iPhone10,3 donor identity from its IPSW DeviceTree"
+echo "[2/5] Generate the iPhone10,3 donor identity from its IPSW DeviceTree"
 bash xnuloader/mkidentity.sh 2>&1 | tee userland/taoyao-identity-build.log
 [[ -s xnuloader/identity.h ]] || die "donor identity header was not generated"
 
-echo "[3/4] Build root.apfs and system.apfs with independent APFS checks"
+echo "[3/5] Rebuild the UEFI loader with the donor identity"
+bash xnuloader/build.sh 2>&1 | tee userland/taoyao-loader-build.log
+[[ -s xnuloader/loader.efi ]] || die "donor-identity UEFI loader was not produced"
+
+echo "[4/5] Build root.apfs and system.apfs with independent APFS checks"
 CHECK=1 PREBUILT=1 REST=1 bash userland/build.sh 2>&1 | tee userland/taoyao-userland-build.log
 
 [[ -s userland/root.apfs ]] || die "userland/root.apfs was not produced"
@@ -63,7 +68,7 @@ CHECK=1 PREBUILT=1 REST=1 bash userland/build.sh 2>&1 | tee userland/taoyao-user
 [[ -s sysimage/system.manifest ]] || die "iOS system manifest is missing"
 [[ -s sysimage/20F66__iPhone10,3_6/dyld_shared_cache_arm64 ]] || die "iOS dyld shared cache is missing"
 
-echo "[4/4] Verify APFS container headers and record local hashes"
+echo "[5/5] Verify APFS container headers and record local hashes"
 python3 - <<'PY'
 from pathlib import Path
 import struct
@@ -94,7 +99,7 @@ PY
   stat -c 'system.apfs_bytes: %s' userland/system.apfs
 } > userland/taoyao-userland-audit.txt
 
-sha256sum userland/root.apfs userland/system.apfs xnuloader/identity.h \
+sha256sum userland/root.apfs userland/system.apfs xnuloader/identity.h xnuloader/loader.efi \
   > userland/taoyao-userland-SHA256SUMS
 cat userland/taoyao-userland-audit.txt
 cat userland/taoyao-userland-SHA256SUMS
