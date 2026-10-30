@@ -19,7 +19,8 @@ EXPECTED = {
     "gicd_size": 0x10000,
     "gicr_base": 0x17A60000,
     "gicr_size": 0x100000,
-    # Observed in the taoyao DTB snapshot; upstream generic DTS uses 10.\n    "timer_ppis": [13, 14, 11, 12],
+    # Observed in the taoyao DTB snapshot; upstream generic DTS uses 10.
+    "timer_ppis": [13, 14, 11, 12],
 }
 
 
