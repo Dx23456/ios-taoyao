@@ -208,9 +208,13 @@ stage2() {
 	for file in loader.h nlist.h fat.h; do
 		[ -f hostinc/mach-o/$file ] || cp "$XNU_SRC/EXTERNAL_HEADERS/mach-o/$file" hostinc/mach-o/
 	done
-	if [ -n "$REBUILD_LIBS" ]; then rm -f $lib/libfirehose_kernel.a $lib/libpthread_kext.a; fi
-	if [ -f $lib/libfirehose_kernel.a ] && [ -f $lib/libpthread_kext.a ]; then
-		log "stage 2: nothing to do"
+	local board_stamp=$lib/.hakios-board-config
+	if [ -n "$REBUILD_LIBS" ] || [ "$(cat "$board_stamp" 2>/dev/null)" != "$MACHINE" ]; then
+		rm -f "$lib/libfirehose_kernel.a" "$lib/libpthread_kext.a"
+	fi
+	if [ -f "$lib/libfirehose_kernel.a" ] && [ -f "$lib/libpthread_kext.a" ] &&
+	   [ "$(cat "$board_stamp" 2>/dev/null)" = "$MACHINE" ]; then
+		log "stage 2: libraries already built for $MACHINE"
 		return 0
 	fi
 	log "exporting the kernel's headers (xnu-build.sh exporthdrs)"
@@ -230,11 +234,12 @@ stage2() {
 			-o build/firehose/firehose_buffer.o libdispatch/src/firehose/firehose_buffer.c
 		libtool -static -o $lib/libfirehose_kernel.a build/firehose/firehose_buffer.o
 	fi
-	if [ ! -f $lib/libpthread_kext.a ]; then
+	if [ ! -f "$lib/libpthread_kext.a" ]; then
 		log "building libpthread_kext.a"
 		build/pthread/build.sh
 	fi
-	log "stage 2 done; now: ./xnu-build.sh -j$JOBS -k"
+	printf '%s\n' "$MACHINE" > "$board_stamp"
+	log "stage 2 done for $MACHINE; now: MACHINE=$MACHINE ./xnu-build.sh -j$JOBS -k"
 }
 
 case "$1" in
