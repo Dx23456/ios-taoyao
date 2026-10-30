@@ -157,8 +157,9 @@ bash tools/build-ios16.5-userland.sh
 ```
 
 This downloads the public iOS 16.5 (20F66) iPhone10,3 IPSW components, generates the
-**donor iPhone10,3 identity** from its DeviceTree, and builds `userland/root.apfs` and
-`userland/system.apfs` using the repository's prebuilt userland binaries. It runs both
+**donor iPhone10,3 identity** from its DeviceTree, rebuilds the UEFI loader with that
+identity, and builds `userland/root.apfs` and `userland/system.apfs` using the repository's
+prebuilt userland binaries. It runs both
 `apfsck` and the kernel's `apfs_lib` read-back checker, then records local SHA-256 hashes.
 
 The system APFS contains Apple software and stays on your own machine; it is not uploaded
