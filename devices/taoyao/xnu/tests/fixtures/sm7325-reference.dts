@@ -1,0 +1,35 @@
+/dts-v1/;
+
+/ {
+    compatible = "xiaomi,taoyao", "qcom,sm7325";
+
+    cpus {
+        cpu0 { device_type = "cpu"; };
+        cpu1 { device_type = "cpu"; };
+        cpu2 { device_type = "cpu"; };
+        cpu3 { device_type = "cpu"; };
+        cpu4 { device_type = "cpu"; };
+        cpu5 { device_type = "cpu"; };
+        cpu6 { device_type = "cpu"; };
+        cpu7 { device_type = "cpu"; };
+    };
+
+    psci {
+        compatible = "arm,psci-1.0";
+        method = "smc";
+    };
+
+    intc: interrupt-controller@17a00000 {
+        compatible = "arm,gic-v3";
+        reg = <0x0 0x17a00000 0x0 0x10000
+               0x0 0x17a60000 0x0 0x100000>;
+    };
+
+    timer {
+        compatible = "arm,armv8-timer";
+        interrupts = <0x1 0xd 0x4
+                      0x1 0xe 0x4
+                      0x1 0xb 0x4
+                      0x1 0xa 0x4>;
+    };
+};
