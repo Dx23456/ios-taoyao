@@ -98,3 +98,11 @@ python3 devices/taoyao/xnu/audit-sm7325-dtb.py taoyao-live.dtb
 ```
 
 The CI self-test uses a synthetic fixture only. It validates the auditor, not the phone's live hardware and not a native XNU build.
+
+## Current bring-up package
+
+The SM7325 kernel now compiles as an ARM64 Mach-O with a one-CPU limit. The UEFI loader has a taoyao profile selected only from a matching EFI FDT configuration-table entry (root model contains `taoyao`, compatible contains `qcom,yupik-idp` or `qcom,yupik`). The loader build is CI-validated.
+
+`tools/build-taoyao-image.sh` assembles an Android boot-image-format **USB-resident loader image**, builds `userland/root.apfs` from the repository's prebuilt HakiOS userland, and stages the SM7325 kernel separately. The loader image enters the custom fastboot command loop; the kernel is uploaded with `./xl run`. A compatible iOS `system.apfs` is not included: it must be built from an extracted iOS IPSW and uploaded with `./xl ramdisk userland/system.apfs`.
+
+This package is not a completed iOS image and is not yet validated to boot on taoyao. Do not flash it as a normal ROM. Use the non-destructive `fastboot boot` / `xl enter` path for bring-up only, and keep a stock recovery path available.
