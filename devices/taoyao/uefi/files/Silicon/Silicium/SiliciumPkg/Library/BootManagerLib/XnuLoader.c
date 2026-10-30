@@ -173,9 +173,21 @@ LogMemoryMap ()
 
   for (UINTN Offset = 0; Offset < MapSize; Offset += DescSize) {
     EFI_MEMORY_DESCRIPTOR *Desc = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)Map + Offset);
+    UINT64                 Bytes;
+
+    if (Desc->NumberOfPages > MAX_UINT64 / EFI_PAGE_SIZE) {
+      Log ("skipping memory descriptor with overflowing page count\n");
+      continue;
+    }
+
+    Bytes = EFI_PAGES_TO_SIZE (Desc->NumberOfPages);
+    if (Desc->PhysicalStart > MAX_UINT64 - Bytes) {
+      Log ("skipping memory descriptor with overflowing physical range\n");
+      continue;
+    }
 
     Log ("%016lx %016lx type=%d attr=%lx\n", Desc->PhysicalStart,
-         Desc->PhysicalStart + EFI_PAGES_TO_SIZE (Desc->NumberOfPages), Desc->Type, Desc->Attribute);
+         Desc->PhysicalStart + Bytes, Desc->Type, Desc->Attribute);
   }
 
   FreePool (Map);
