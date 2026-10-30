@@ -135,7 +135,11 @@ jobs:
           cp out/taoyao/xnu-taoyao-loader.img out/xnu-taoyao-loader.img
           cp out/taoyao/taoyao-usb.xnup out/taoyao-usb.xnup
           mkdir -p out/prebuilt out/xnuloader out/userland
+          # Keep the canonical files at the package root for the auditor and
+          # retain the repository layout used by ./xl for local bring-up.
+          cp out/taoyao/root.apfs out/root.apfs
           cp out/taoyao/root.apfs out/userland/root.apfs
+          cp out/taoyao/taoyao-loader.efi out/taoyao-loader.efi
           cp out/taoyao/taoyao-loader.efi out/xnuloader/loader.efi
           cp out/taoyao/mach.development.sm7325 out/prebuilt/mach.development.sm7325
           rm -rf out/taoyao
@@ -159,6 +163,8 @@ jobs:
           python3 tools/audit-taoyao-artifacts.py --dir out
           cd out
           find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          # Verify every packaged file against the manifest before upload.
+          sha256sum --check SHA256SUMS
           cat SHA256SUMS
           file xnu-taoyao-loader.img
 
