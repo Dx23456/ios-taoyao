@@ -22,4 +22,7 @@
 #define HAS_FAST_CNTVCT           1
 #define HAS_GIC_V3                1
 
+/* Compile-time placeholder only; the SM7325 PMU/KPC interface is not implemented. */
+#define CORE_NCTRS                8
+
 #endif /* _PEXPERT_ARM64_SM7325_H */
