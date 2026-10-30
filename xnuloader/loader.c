@@ -566,6 +566,145 @@ static const struct platform platform_redwood = {
 	.small_cores = 0x0f,
 };
 
+/*
+ * Xiaomi 12 Lite (taoyao), SM7325/Yupik. GIC and PSCI values are read from
+ * the taoyao DTB snapshot. Keep this a single-core profile until CPU topology,
+ * PSCI CPU_ON and GIC SGI routing have been validated on the handset.
+ */
+static const struct platform platform_taoyao = {
+	.name = "taoyao-sm7325", .io_base = 0x00400000, .io_size = 0x3FC00000,
+	.gic_dist = 0x17A00000, .gic_redist = 0x17A60000, .uart = 0, .psci_hvc = 0,
+	.cores = 1, .core_shift = 8,
+	.log_other_cpu = 0,
+	.small_cores = 0,
+};
+
+/* EFI configuration-table entry carrying the flattened device tree. */
+static const efi_guid EFI_DTB_TABLE_GUID = {
+	0xb1b621d5, 0xf19c, 0x41a5, { 0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0 }
+};
+
+static uint32_t
+fdt_be32(const uint8_t *p)
+{
+	return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+}
+
+static int
+bytes_contain(const uint8_t *p, uint32_t size, const char *needle)
+{
+	size_t n = str_len(needle);
+	if (n == 0 || n > size) {
+		return 0;
+	}
+	for (uint32_t i = 0; i <= size - n; i++) {
+		if (memcmp(p + i, needle, n) == 0) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+static int
+fdt_name_is(const uint8_t *strings, uint32_t size, uint32_t offset, const char *name)
+{
+	size_t n = str_len(name);
+	return offset < size && n + 1 <= size - offset &&
+	    memcmp(strings + offset, name, n) == 0 && strings[offset + n] == 0;
+}
+
+static const void *
+efi_device_tree(void)
+{
+	if (ST == NULL || ST->tables == NULL || ST->nr_tables > 128) {
+		return NULL;
+	}
+	for (uint64_t i = 0; i < ST->nr_tables; i++) {
+		if (memcmp(&ST->tables[i].guid, &EFI_DTB_TABLE_GUID, sizeof(EFI_DTB_TABLE_GUID)) == 0) {
+			return ST->tables[i].table;
+		}
+	}
+	return NULL;
+}
+
+/*
+ * Select taoyao only from a validated EFI DTB configuration table. A
+ * framebuffer address is not a board identifier and is never sufficient.
+ */
+static int
+fdt_is_taoyao(const void *table)
+{
+	const uint8_t *b = table;
+	uint32_t total, off_struct, off_strings, size_struct, size_strings;
+	uint32_t p, end;
+	int depth = -1, model_taoyao = 0, compatible_yupik = 0;
+
+	if (b == NULL || fdt_be32(b) != 0xd00dfeed) {
+		return 0;
+	}
+	total = fdt_be32(b + 4);
+	off_struct = fdt_be32(b + 8);
+	off_strings = fdt_be32(b + 12);
+	size_strings = fdt_be32(b + 32);
+	size_struct = fdt_be32(b + 36);
+	if (total < 40 || total > 0x1000000 ||
+	    off_struct > total || size_struct > total - off_struct ||
+	    off_strings > total || size_strings > total - off_strings) {
+		return 0;
+	}
+
+	p = off_struct;
+	end = off_struct + size_struct;
+	while (p + 4 <= end) {
+		uint32_t token = fdt_be32(b + p);
+		p += 4;
+		if (token == 1) { /* FDT_BEGIN_NODE */
+			while (p < end && b[p] != 0) {
+				p++;
+			}
+			if (p >= end) {
+				return 0;
+			}
+			p = (p + 4) & ~3u;
+			depth++;
+		} else if (token == 2) { /* FDT_END_NODE */
+			if (depth == 0) {
+				break;
+			}
+			depth--;
+		} else if (token == 3) { /* FDT_PROP */
+			uint32_t len, nameoff;
+			if (p + 8 > end) {
+				return 0;
+			}
+			len = fdt_be32(b + p);
+			nameoff = fdt_be32(b + p + 4);
+			p += 8;
+			if (len > end - p || nameoff >= size_strings) {
+				return 0;
+			}
+			if (depth == 0) {
+				if (fdt_name_is(b + off_strings, size_strings, nameoff, "model") &&
+				    bytes_contain(b + p, len, "taoyao")) {
+					model_taoyao = 1;
+				} else if (fdt_name_is(b + off_strings, size_strings, nameoff, "compatible") &&
+				    (bytes_contain(b + p, len, "qcom,yupik-idp") ||
+				     bytes_contain(b + p, len, "qcom,yupik"))) {
+					compatible_yupik = 1;
+				}
+			}
+			p = (p + len + 3) & ~3u;
+		} else if (token == 4) { /* FDT_NOP */
+			continue;
+		} else if (token == 9) { /* FDT_END */
+			break;
+		} else {
+			return 0;
+		}
+	}
+	return model_taoyao && compatible_yupik;
+}
+
 /* ------------------------------------------------------------------------ */
 
 static void
@@ -4069,30 +4208,37 @@ efi_main(efi_handle image, efi_system_table *st)
 	print("CurrentEL=%x MIDR=%x MMFR0=%x CNTFRQ=%d image=%x\n", READ_SYSREG(CurrentEL) >> 2, READ_SYSREG(MIDR_EL1),
 	    READ_SYSREG(ID_AA64MMFR0_EL1), READ_SYSREG(CNTFRQ_EL0), (uint64_t)(uintptr_t)&__ImageBase);
 
+	const void *fdt = efi_device_tree();
+	int is_taoyao = fdt_is_taoyao(fdt);
 	/*
-	 * Framebuffer address is not a hardware identity. taoyao reports
-	 * 0xE1000000 too; do not infer the unrelated Redwood GIC/PSCI/CPU profile.
-	 * Only the low-address QEMU reference profile is currently enabled.
+	 * A high framebuffer is not a hardware identity. Select taoyao only when
+	 * the EFI configuration table carries a valid DTB with the board model
+	 * and Yupik compatible string; otherwise retain the QEMU reference path.
 	 */
-	PLAT = &platform_qemu_virt;
+	PLAT = is_taoyao ? &platform_taoyao : &platform_qemu_virt;
+	print("EFI DTB=%x taoyao_identity=%d\\n", (uint64_t)(uintptr_t)fdt, (uint64_t)is_taoyao);
 	if (EFI_ERROR(BS->locate_protocol(&gop_guid, NULL, (void **)&GOP)) ||
 	    GOP == NULL || GOP->mode == NULL || GOP->mode->info == NULL ||
 	    GOP->mode->fb_base == 0) {
-		print("no usable GOP: refusing to guess a platform profile\n");
+		print("no usable GOP: refusing to guess a platform profile\\n");
 		reboot();
 	}
 	SCREEN.base = GOP->mode->fb_base;
 	SCREEN.width = GOP->mode->info->width;
 	SCREEN.height = GOP->mode->info->height;
 	SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
-	if (SCREEN.base >= 0x80000000ULL) {
-		print("unsupported physical platform fb=%x; no validated taoyao/SM7325 profile; refusing kernel start\n",
+	if (SCREEN.base >= 0x80000000ULL && !is_taoyao) {
+		print("unsupported physical platform fb=%x; no matching EFI DTB identity; refusing kernel start\\n",
 		    SCREEN.base);
 		reboot();
 	}
 	ramfb_phone_screen();
-	print("display %d x %d at %x\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
-	print("platform %s (QEMU reference only)\n", PLAT->name);
+	print("display %d x %d at %x\\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
+	if (is_taoyao) {
+		print("platform taoyao SM7325 (single-core bring-up profile; native boot not validated)\\n");
+	} else {
+		print("platform %s (QEMU reference only)\\n", PLAT->name);
+	}
 
 	install_exception_hook();
 	wdt_arm();
