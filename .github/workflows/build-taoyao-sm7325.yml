@@ -10,6 +10,8 @@ on:
       - 'xnu-build.sh'
       - 'xnu-deps/**'
       - 'xnuloader/**'
+      - 'userland/**'
+      - 'xl'
       - 'tools/build-taoyao-image.sh'
       - 'mkxnuimg.py'
       - 'devices/taoyao/prebuilt/**'
@@ -123,20 +125,24 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      - name: Package experimental taoyao fastboot boot image
+      - name: Package taoyao USB loader and SM7325 kernel assets
         if: success()
         run: |
           set -euo pipefail
           mkdir -p out
-          cp "$KERNEL_BIN" out/mach.development.sm7325.single-core-scaffold
-          XNU_KERNEL="$PWD/$KERNEL_BIN" OUT="$PWD/out/taoyao" tools/build-taoyao-image.sh
-          cp out/taoyao/xnu-taoyao.img out/xnu-taoyao-experimental-boot.img
-          cp out/taoyao/taoyao.xnup out/taoyao.xnup
-          cp xnuloader/loader.efi out/taoyao-loader.efi
+          XNU_KERNEL="$PWD/$KERNEL_BIN" OUT="$PWD/out/taoyao" bash tools/build-taoyao-image.sh
+          cp out/taoyao/xnu-taoyao-loader.img out/xnu-taoyao-loader.img
+          cp out/taoyao/taoyao-usb.xnup out/taoyao-usb.xnup
+          cp out/taoyao/root.apfs out/root.apfs
+          cp out/taoyao/taoyao-loader.efi out/taoyao-loader.efi
+          cp out/taoyao/mach.development.sm7325 out/mach.development.sm7325
           {
-            echo "HakiOS taoyao SM7325 experimental Android boot image"
+            echo "HakiOS taoyao SM7325 USB-resident bring-up package"
             echo "machine: SM7325 / Yupik"
-            echo "image_format: Android boot image v1 (fastboot boot package)"
+            echo "image_format: Android boot image v1; loader enters fastboot USB mode"
+            echo "kernel: separate mach.development.sm7325 artifact; uploaded by ./xl run"
+            echo "small_root: root.apfs built from repository prebuilt userland"
+            echo "system_apfs: NOT included; requires compatible iOS IPSW extraction"
             echo "cpu_limit: 1 (single-core bring-up profile)"
             echo "native_taoyao_bootable: NO"
             echo "hardware_boot_tested: NO"
@@ -150,12 +156,12 @@ jobs:
           cd out
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
-          file xnu-taoyao-experimental-boot.img
+          file xnu-taoyao-loader.img
 
-      - name: Upload experimental taoyao boot image
+      - name: Upload taoyao USB loader and kernel assets
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: hakios-taoyao-sm7325-experimental-boot-${{ env.XNU_TAG }}-${{ github.sha }}
+          name: hakios-taoyao-sm7325-usb-bringup-${{ env.XNU_TAG }}-${{ github.sha }}
           path: out/
           retention-days: 14
