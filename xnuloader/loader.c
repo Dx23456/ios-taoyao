@@ -3071,6 +3071,10 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	/* what MobileGestalt answers "main screen scale" from: 3 device pixels per point */
 	dt_prop_u32(&w, "display-scale", 3);
 	dt_prop_u32(&w, "display-rotation", 0);
+	dt_prop_u32(&w, "pro-motion", 1);
+	dt_prop_u32(&w, "display-pro-motion", 1);
+	dt_prop_u32(&w, "refresh-rate", 120);
+	dt_prop_u32(&w, "nominal-frame-rate", 120);
 	/* how the kernel is to ask the firmware for more cores (PSCI) */
 	dt_prop_str(&w, "psci-method", plat->psci_hvc ? "hvc" : "smc");
 	/* the time now, by the firmware's clock (the kernel has no real-time clock driver) */
@@ -3146,6 +3150,10 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	/* the product: screen class, artwork scale, name ... as on the real phone */
 	dt_begin(&w, "product");
 	dt_identity(&w, identity_product, sizeof(identity_product) / sizeof(identity_product[0]), identity_product_data);
+	dt_prop_u32(&w, "pro-motion", 1);
+	dt_prop_u32(&w, "display-pro-motion", 1);
+	dt_prop_u32(&w, "refresh-rate", 120);
+	dt_prop_u32(&w, "nominal-frame-rate", 120);
 	/*
 	 * and its haptics: "closed-loop" (MobileGestalt's DeviceSupportsClosedLoopHaptics) makes iOS play
 	 * its vibrations and feedbacks as waveforms on the "Actuator" audio device (the audio plug-in
