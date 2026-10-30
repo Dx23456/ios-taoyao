@@ -81,16 +81,20 @@ jobs:
         run: |
           set -euo pipefail
           archive="$RUNNER_TEMP/taoyao/$XIAOMI_ROM_NAME"
-          member="$(tar -tzf "$archive" | grep -E '(^|/)images/xbl.img$' | head -n 1 || true)"
-          [[ -n "$member" ]] || {
-            echo "::error::The verified ROM archive does not contain images/xbl.img."
+          extract_dir="$RUNNER_TEMP/taoyao/extract"
+          mkdir -p "$extract_dir"
+          # Extract only xbl.img in one archive pass; do not unpack the 6.9 GB ROM.
+          tar -xzf "$archive" --wildcards --no-anchored 'images/xbl.img' -C "$extract_dir"
+          mapfile -t xbl_files < <(find "$extract_dir" -type f -name xbl.img -print)
+          [[ "${#xbl_files[@]}" -eq 1 ]] || {
+            echo "::error::Expected exactly one images/xbl.img in the verified ROM."
             exit 1
           }
-          tar -xOf "$archive" "$member" > "$RUNNER_TEMP/taoyao/xbl.img"
+          install -m 0644 "${xbl_files[0]}" "$RUNNER_TEMP/taoyao/xbl.img"
           test -s "$RUNNER_TEMP/taoyao/xbl.img"
           xbl_sha256="$(sha256sum "$RUNNER_TEMP/taoyao/xbl.img" | cut -d' ' -f1)"
           echo "XBL_SHA256=$xbl_sha256" >> "$GITHUB_ENV"
-          rm -f "$archive"
+          rm -rf "$extract_dir" "$archive"
           echo "Extracted xbl.img from the verified official Xiaomi ROM."
           echo "ROM SHA-256: $ROM_SHA256"
           echo "XBL SHA-256: $xbl_sha256"
