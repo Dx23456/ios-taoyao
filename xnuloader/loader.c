@@ -3085,7 +3085,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	}
 
 	/* --- load segments -------------------------------------------------- */
-	lc = (const struct load_command *)(mh + 1);
+	const struct load_command *lc = (const struct load_command *)(mh + 1);
 	for (uint32_t i = 0; i < mh->ncmds; i++, lc = (const void *)((const uint8_t *)lc + lc->cmdsize)) {
 		const struct segment_command_64 *sg = (const void *)lc;
 		if (lc->cmd != LC_SEGMENT_64 || sg->vmsize == 0) {
