@@ -23,6 +23,19 @@ A port of [Project Silicium / Mu-Silicium](https://github.com/Project-Silicium/M
 
 ---
 
+## GitHub Actions Firmware Download Source
+
+The `.github/workflows/build-taoyao-uefi.yml` workflow now downloads the pinned Xiaomi 12 Lite Global fastboot ROM directly from Xiaomi's CDN:
+
+- Primary: `https://bigota.d.miui.com`
+- Fallback: `https://hugeota.d.miui.com`
+- Firmware: `OS1.0.34.0.ULIMIXM` (`taoyao`, Global)
+- The complete ROM archive is checked against its published MD5 before extraction.
+- Only `images/xbl.img` is extracted; the full ROM is not unpacked or retained.
+- The extracted XBL receives a SHA-256 audit value in the workflow log.
+
+This removes the `TAOYAO_XBL_URL` and `TAOYAO_XBL_SHA256` repository-secret dependency. The workflow is pinned to the Global package; change the package filename and checksum together if targeting a different official region/build.
+
 ## Build
 
 Install host packages as in Mu-Silicium's `setup_env.sh` (e.g. Arch Linux: `git base-devel lld nasm clang llvm aarch64-linux-gnu-gcc python python-pip python-virtualenv`; Ubuntu/Debian: `git build-essential lld nasm clang llvm gcc-aarch64-linux-gnu python3 python3-pip python3-venv mono-complete`).
