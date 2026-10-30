@@ -49,6 +49,51 @@ Source: user-supplied `/sys/firmware/fdt` capture, collected with `collect-live-
 
 **Bring-up consequence:** preserve the 4+3+1 topology as observed metadata, but keep XNU at `MAX_CPUS=1`. Do not derive core implementation IDs from `qcom,kryo`; collect per-core MIDR/feature registers from a trusted runtime diagnostic before implementing CPU feature selection. Do not construct a usable-RAM allocator from the three RAM banks alone; reconcile every reserved region with the UEFI memory map immediately before `ExitBootServices()`.
 
+
+## 2B. Live CPU MIDR and cpufreq findings (2026-10-30)
+
+Source: user-supplied, read-only MT Manager terminal output from the running taoyao handset. These are runtime Linux sysfs observations, separate from the DTB capture above.
+
+### CPU implementation identification
+
+The following MIDR_EL1 values were read from `/sys/devices/system/cpu/cpuN/regs/identification/midr_el1`:
+
+| Linux logical CPUs | MIDR_EL1 | Decode | Count |
+|---|---:|---|---:|
+| CPU0-CPU3 | `0x412fd050` | Arm implementer `0x41`, part `0xd05`: Cortex-A55, r2p0 | 4 |
+| CPU4-CPU7 | `0x411fd411` | Arm implementer `0x41`, part `0xd41`: Cortex-A78, r1p1 | 4 |
+
+REVIDR_EL1 was reported as zero on all eight CPUs. The queried `id_aa64*` feature-register files were not available in the supplied output; do not infer the complete architectural feature set from MIDR alone.
+
+### cpufreq policy groups
+
+The handset exposes three policies under `/sys/devices/system/cpu/cpufreq`, all using driver `qcom-cpufreq-hw` and governor `schedhorizon`:
+
+| Policy | related_cpus / affected_cpus | MIDR group from per-CPU sysfs | cpuinfo_min_freq | cpuinfo_max_freq |
+|---|---|---|---:|---:|
+| `policy0` | `0 1 2 3` | 4 × Cortex-A55 | 300000 kHz | 1804800 kHz |
+| `policy4` | `4 5 6` | 3 × Cortex-A78 | 691200 kHz | 2400000 kHz |
+| `policy7` | `7` | 1 × Cortex-A78 | 806400 kHz | 2400000 kHz |
+
+At capture time, the reported scaling limits were policy0 1708800-1804800 kHz, policy4 1324800-2054400 kHz, and policy7 806400-2035200 kHz. These are runtime policy settings and must not be treated as fixed silicon limits or hardcoded XNU operating points. The per-core `scaling_cur_freq` readings were also instantaneous and are not platform constants.
+
+### DTB affinity values and mapping confidence
+
+The live `/proc/device-tree/cpus/cpu@*` nodes report `reg` values `<0x0 0x0>` through `<0x0 0x700>` in `0x100` increments. All eight nodes declare `compatible = "qcom,kryo"` and `enable-method = "psci"`. The DTB CPU map separately groups the nodes as 4 + 3 + 1.
+
+The Linux sysfs MIDR and cpufreq evidence establishes the logical CPU architecture groups and policy masks. Matching Linux logical CPU numbers to the DTB affinity sequence (CPU0 ↔ `0x000`, ..., CPU7 ↔ `0x700`) is a strong, numbering-consistent crosswalk, but the handset did not expose `mpidr_el1` at the queried sysfs path. Therefore, record this crosswalk as **inferred from matching Linux logical numbering and DTB CPU-node order**, not as a direct MPIDR_EL1 measurement. Do not use Linux `core_id` as an MPIDR substitute.
+
+The single-CPU `policy7` domain identifies CPU7 as a separate high-performance frequency domain. Calling it the prime core remains a platform interpretation, not something established by MIDR alone.
+
+### Bring-up consequence
+
+- Record the observed topology as four Cortex-A55 CPUs and four Cortex-A78 CPUs, partitioned by cpufreq into 4 + 3 + 1 policy groups.
+- Keep the DTB `reg` affinity values distinct from Linux logical CPU IDs in code and documentation.
+- Do not hardcode the runtime scaling limits as XNU frequency tables.
+- Keep `MAX_CPUS=1`. MIDR and cpufreq observations do not validate PSCI `CPU_ON`, GICv3 redistributor setup, per-CPU timer interrupts, cache coherency, or XNU SMP scheduling.
+- Before relying on the inferred logical-CPU-to-MPIDR crosswalk for secondary startup, obtain a direct MPIDR/affinity measurement or validate the mapping through a controlled firmware/UEFI CPU enumeration path.
+
+
 ## 3. Current XNU machine scaffold
 
 The repository now contains a compile-only XNU machine configuration:
