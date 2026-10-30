@@ -25,7 +25,9 @@ case "$MACHINE" in
 		echo "WARNING: building the BCM2837 reference/test target, NOT Xiaomi taoyao." >&2
 		;;
 	*)
-		if [ ! -f "config/${MACHINE}/MASTER" ] && [ ! -f "config/${MACHINE}/MASTER.arm64" ] &&
+		MACHINE_LC=$(printf '%s' "$MACHINE" | tr '[:upper:]' '[:lower:]')
+		if [ ! -f "config/MASTER.arm64.${MACHINE_LC}" ] &&
+		   [ ! -f "config/${MACHINE}/MASTER" ] && [ ! -f "config/${MACHINE}/MASTER.arm64" ] &&
 		   ! grep -Rqs "MACHINE_CONFIGS.*${MACHINE}" config; then
 			echo "error: no recognized XNU machine configuration for MACHINE=$MACHINE" >&2
 			exit 2
