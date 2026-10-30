@@ -53,7 +53,9 @@ jobs:
           )
           downloaded=0
           for url in "${urls[@]}"; do
-            echo "::group::Trying official Xiaomi CDN: ${url%%/*}"
+            url_host="${url#https://}"
+            url_host="${url_host%%/*}"
+            echo "::group::Trying official Xiaomi CDN: $url_host"
             rm -f "$XIAOMI_ROM_NAME"
             if curl --fail --location --show-error --retry 1 --retry-all-errors \
                 --connect-timeout 25 --speed-time 90 --speed-limit 65536 \
