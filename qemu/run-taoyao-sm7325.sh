@@ -100,6 +100,11 @@ if [[ "${QEMU_NET:-0}" != 0 ]]; then
   CMDLINE="virtio_net=1 $CMDLINE"
 fi
 
+DISPLAY_ARGS=()
+if [[ -n "${QEMU_DISPLAY:-}" ]]; then
+  DISPLAY_ARGS=(-display "$QEMU_DISPLAY")
+fi
+
 SOUND=()
 if qemu-system-aarch64 -device help 2>/dev/null | grep -q '"virtio-sound-device"'; then
   case "${AUDIO:-none}" in
@@ -131,4 +136,4 @@ QEMU_MEM="${RAM_GB}G" exec qemu/run.sh "$((SECS + 40))" \
   -device virtio-tablet-device -device virtio-keyboard-device -device ramfb \
   -monitor tcp:127.0.0.1:$((4444 + 10 * INSTANCE)),server,nowait \
   -qmp tcp:127.0.0.1:$((4445 + 10 * INSTANCE)),server,nowait \
-  "${NET[@]}" "${SOUND[@]}" "$@"
+  "${NET[@]}" "${SOUND[@]}" "${DISPLAY_ARGS[@]}" "$@"
