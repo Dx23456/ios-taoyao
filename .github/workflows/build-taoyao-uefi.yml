@@ -9,26 +9,27 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
     env:
-      XBL_URL: ${{ secrets.TAOYAO_XBL_URL }}
-      XBL_SHA256: ${{ secrets.TAOYAO_XBL_SHA256 }}
+      # Official Xiaomi 12 Lite (taoyao) Global fastboot ROM.
+      # hugeota is attempted first; bigota is the official fallback.
+      XIAOMI_ROM_NAME: taoyao_global_images_OS1.0.34.0.ULIMIXM_20260525.0000.00_14.0_global_e8602e568a.tgz
+      XIAOMI_ROM_MD5: e8602e568a7b82cabc34b7f3aeb43b72
+      XIAOMI_ROM_PATH: /OS1.0.34.0.ULIMIXM/taoyao_global_images_OS1.0.34.0.ULIMIXM_20260525.0000.00_14.0_global_e8602e568a.tgz
       MU_DIR: ${{ github.workspace }}/Mu-Silicium
       OUT_DIR: ${{ github.workspace }}/out/taoyao-uefi
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate protected inputs
+      - name: Validate taoyao build inputs
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "$XBL_URL" && -n "$XBL_SHA256" ]] || {
-            echo "::error::Configure TAOYAO_XBL_URL and TAOYAO_XBL_SHA256 repository secrets."
+          [[ "$XIAOMI_ROM_MD5" =~ ^[0-9a-f]{32}$ ]] || {
+            echo "::error::Pinned Xiaomi ROM MD5 is malformed."
             exit 1
           }
-          [[ "$XBL_URL" == https://* ]] || { echo "::error::XBL URL must use HTTPS."; exit 1; }
-          [[ "$XBL_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "::error::Invalid SHA-256."; exit 1; }
           test -s devices/taoyao/prebuilt/device-tree.dtb
 
       - name: Install dependencies
@@ -40,16 +41,58 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Download and verify official XBL
+      - name: Download official Xiaomi firmware (fast mirror + fallback)
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/taoyao"
-          curl --fail --location --silent --show-error --retry 3 -o "$RUNNER_TEMP/taoyao/xbl.img" "$XBL_URL"
-          printf '%s  %s\n' "$XBL_SHA256" "$RUNNER_TEMP/taoyao/xbl.img" | sha256sum --check --status || {
-            echo "::error::xbl.img checksum mismatch."
+          cd "$RUNNER_TEMP/taoyao"
+          urls=(
+            "https://hugeota.d.miui.com${XIAOMI_ROM_PATH}"
+            "https://bigota.d.miui.com${XIAOMI_ROM_PATH}"
+          )
+          downloaded=0
+          for url in "${urls[@]}"; do
+            echo "::group::Trying official Xiaomi CDN: ${url%%/*}"
+            rm -f "$XIAOMI_ROM_NAME"
+            if curl --fail --location --show-error --retry 1 --retry-all-errors \
+                --connect-timeout 25 --speed-time 90 --speed-limit 65536 \
+                --output "$XIAOMI_ROM_NAME" "$url"; then
+              if printf '%s  %s\n' "$XIAOMI_ROM_MD5" "$XIAOMI_ROM_NAME" | md5sum --check --status; then
+                downloaded=1
+                echo "Official Xiaomi ROM downloaded and MD5-verified."
+                echo "::endgroup::"
+                break
+              fi
+              echo "::warning::Downloaded file failed Xiaomi ROM MD5; trying next official CDN."
+            else
+              echo "::warning::This official CDN failed or was too slow; trying the next official CDN."
+            fi
+            echo "::endgroup::"
+          done
+          [[ "$downloaded" -eq 1 ]] || {
+            echo "::error::Could not download and verify the pinned official Xiaomi ROM from either official CDN."
             exit 1
           }
+          echo "ROM_SHA256=$(sha256sum "$XIAOMI_ROM_NAME" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
+      - name: Extract XBL from verified official firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/taoyao/$XIAOMI_ROM_NAME"
+          member="$(tar -tzf "$archive" | grep -E '(^|/)images/xbl.img$' | head -n 1 || true)"
+          [[ -n "$member" ]] || {
+            echo "::error::The verified ROM archive does not contain images/xbl.img."
+            exit 1
+          }
+          tar -xOf "$archive" "$member" > "$RUNNER_TEMP/taoyao/xbl.img"
+          test -s "$RUNNER_TEMP/taoyao/xbl.img"
+          echo "XBL_SHA256=$(sha256sum "$RUNNER_TEMP/taoyao/xbl.img" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          rm -f "$archive"
+          echo "Extracted xbl.img from the verified official Xiaomi ROM."
+          echo "ROM SHA-256: $ROM_SHA256"
+          echo "XBL SHA-256: $XBL_SHA256"
 
       - name: Apply pinned Mu-Silicium port
         run: |
@@ -62,7 +105,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/MSMTools/UEFIReader.git "$RUNNER_TEMP/UEFIReader"
+          git clone --depth 1 https://github.com/WOA-Project/UEFIReader.git "$RUNNER_TEMP/UEFIReader"
           dotnet run --project "$RUNNER_TEMP/UEFIReader/UEFIReader/UEFIReader.csproj" -- "$RUNNER_TEMP/taoyao/xbl.img" "$MU_DIR/Binaries/taoyao"
           mapfile -t qcom_dirs < <(find "$MU_DIR/Binaries/taoyao" -mindepth 2 -maxdepth 3 -type d -name QcomPkg)
           [[ "${#qcom_dirs[@]}" -eq 1 ]] || { echo "::error::Could not uniquely locate UEFIReader QcomPkg output."; exit 1; }
@@ -89,7 +132,6 @@ jobs:
           source "$RUNNER_TEMP/uefi-venv/bin/activate"
           cd "$MU_DIR"
 
-          # Add the taoyao XNUP destination to Mu-Silicium's BootShim make call.
           python3 - <<'PY'
           from pathlib import Path
           p = Path("build_uefi.py")
@@ -140,7 +182,9 @@ jobs:
             echo "UEFI FD base: 0x9FD00000"
             echo "UEFI FD size: 0x00200000"
             echo "BootShim payload base: 0xF0000000"
-            echo "XBL checksum verified; proprietary XBL source not packaged"
+            echo "Firmware source: official Xiaomi taoyao Global OS1.0.34.0.ULIMIXM fastboot ROM"
+            echo "Firmware CDN: hugeota.d.miui.com first, bigota.d.miui.com fallback"
+            echo "Firmware ROM MD5 verified before XBL extraction"
             echo "Hardware UEFI boot tested: NO"
             echo "Native XNU bootable: NO"
             echo "Do not flash or fastboot boot this experimental image."
