@@ -192,7 +192,8 @@ jobs:
           ./xnuloader/build.sh
           python3 xnuloader/mkpayload.py \
             -o "$RUNNER_TEMP/taoyao/taoyao-loader.xnup" \
-            "loader.efi=$GITHUB_WORKSPACE/xnuloader/loader.efi" --usb
+            "loader.efi=$GITHUB_WORKSPACE/xnuloader/loader.efi" \\
+            "taoyao.dtb=$MU_DIR/Resources/DTBs/taoyao.dtb" --usb
           python3 mkxnuimg.py --device taoyao \
             --payload "$RUNNER_TEMP/taoyao/taoyao-loader.xnup" \
             --output "$OUT_DIR/uefi.img"
@@ -243,18 +244,33 @@ jobs:
               raise SystemExit("FAIL: decompressed boot kernel is not exactly BootShim + UEFI FD + XNUP")
           if dec.unused_data != dtb:
               raise SystemExit("FAIL: DTB appended after gzip member does not match the selected device tree")
-          if payload[8:24].split(b"\0", 1)[0] != b"loader.efi":
+          entry1 = 8
+          name1 = payload[entry1:entry1 + 16].split(b"\0", 1)[0]
+          size1 = struct.unpack_from("<I", payload, entry1 + 16)[0]
+          if name1 != b"loader.efi":
               raise SystemExit("FAIL: first XNUP entry is not loader.efi")
+          entry2 = entry1 + 24 + ((size1 + 15) & ~15)
+          if entry2 + 24 > len(payload):
+              raise SystemExit("FAIL: XNUP is missing the taoyao.dtb entry")
+          name2 = payload[entry2:entry2 + 16].split(b"\0", 1)[0]
+          size2 = struct.unpack_from("<I", payload, entry2 + 16)[0]
+          dtb_entry = payload[entry2 + 24:entry2 + 24 + size2]
+          if name2 != b"taoyao.dtb" or dtb_entry != dtb:
+              raise SystemExit("FAIL: second XNUP entry is not the exact taoyao DTB")
+          if len(dtb_entry) < 40 or dtb_entry[:4] != b"\\xd0\\x0d\\xfe\\xed":
+              raise SystemExit("FAIL: XNUP taoyao.dtb entry is not an FDT blob")
+          if struct.unpack_from(">I", dtb_entry, 4)[0] != len(dtb_entry):
+              raise SystemExit("FAIL: XNUP DTB header size does not match its entry")
           print(f"PASS: Android boot-v1 page={page_size}; kernel_addr={kernel_addr:#x}; ramdisk_addr={ramdisk_addr:#x}; tags_addr={tags_addr:#x}; kernel={kernel_size}; ramdisk={ramdisk_size}; shim={len(shim)}; FD={len(fd)}; XNUP={len(payload)}; DTB={len(dtb)}")
           PY
           {
             echo "Target: Xiaomi 12 Lite taoyao / SM7325 / AArch64"
             echo "Artifact: uefi.img"
-            echo "Format: Android boot-v1; gzip(BootShim + 2 MiB UEFI FD + XNUP loader payload) + taoyao DTB; Mu-Silicium ramdisk"
+            echo "Format: Android boot-v1; gzip(BootShim + 2 MiB UEFI FD + XNUP{loader.efi,taoyao.dtb,usb}) + taoyao DTB; Mu-Silicium ramdisk"
             echo "UEFI FD base: 0x9FD00000"
             echo "UEFI FD size: 0x00200000"
             echo "BootShim XNUP payload base: 0xF0000000"
-            echo "XNU loader: placeholder identity; USB mode; no kernel or Apple IPSW identity"
+            echo "XNU loader: placeholder identity; USB mode; taoyao DTB supplied through EFI configuration table; no kernel or Apple IPSW identity"
             echo "XNU RAM window: 0x100000000..0x280000000 (6 GiB; statically checked against taoyao DTB)"
             echo "Firmware source: official Xiaomi taoyao Global OS1.0.34.0.ULIMIXM fastboot ROM"
             echo "Firmware CDN: Singapore Xiaomi OSS mirror, then bigota, then hugeota"
