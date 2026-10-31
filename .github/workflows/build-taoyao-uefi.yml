@@ -235,10 +235,11 @@ jobs:
           {
             echo "Target: Xiaomi 12 Lite taoyao / SM7325 / AArch64"
             echo "Artifact: uefi.img"
-            echo "Format: Android boot image header v1; compressed BootShim + UEFI FD + appended DTB; Mu-Silicium ramdisk"
+            echo "Format: Android boot-v1; gzip(BootShim + 2 MiB UEFI FD + XNUP loader payload) + taoyao DTB; Mu-Silicium ramdisk"
             echo "UEFI FD base: 0x9FD00000"
             echo "UEFI FD size: 0x00200000"
-            echo "BootShim XNUP payload base: 0xF0000000"\n            echo "XNU loader: placeholder identity; USB mode; no kernel or Apple IPSW identity"
+            echo "BootShim XNUP payload base: 0xF0000000"
+            echo "XNU loader: placeholder identity; USB mode; no kernel or Apple IPSW identity"
             echo "Firmware source: official Xiaomi taoyao Global OS1.0.34.0.ULIMIXM fastboot ROM"
             echo "Firmware CDN: Singapore Xiaomi OSS mirror, then bigota, then hugeota"
             echo "Firmware ROM MD5 verified before XBL extraction"
