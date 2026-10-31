@@ -199,19 +199,22 @@ jobs:
           import pathlib, struct, sys, zlib
           image, shim_path, fd_path, payload_path, dtb_path = map(pathlib.Path, sys.argv[1:])
           b = image.read_bytes()
-          if len(b) < 4096 or b[:8] != b"ANDROID!":
+          if len(b) < 2048 or b[:8] != b"ANDROID!":
               raise SystemExit("FAIL: output is not an Android boot image")
           header_version = struct.unpack_from("<I", b, 40)[0]
+          page_size = struct.unpack_from("<I", b, 36)[0]
           kernel_size = struct.unpack_from("<I", b, 8)[0]
           ramdisk_size = struct.unpack_from("<I", b, 16)[0]
           if header_version != 1:
               raise SystemExit(f"FAIL: expected Android boot header v1, got {header_version}")
+          if page_size not in (2048, 4096, 8192, 16384):
+              raise SystemExit(f"FAIL: unsupported Android boot page size {page_size}")
           if not kernel_size or not ramdisk_size:
               raise SystemExit("FAIL: kernel or ramdisk payload is empty")
-          ramdisk_offset = 4096 + ((kernel_size + 4095) // 4096) * 4096
+          ramdisk_offset = page_size + ((kernel_size + page_size - 1) // page_size) * page_size
           if ramdisk_offset + ramdisk_size > len(b):
               raise SystemExit("FAIL: image is truncated before the complete ramdisk")
-          kernel = b[4096:4096 + kernel_size]
+          kernel = b[page_size:page_size + kernel_size]
           dec = zlib.decompressobj(16 + zlib.MAX_WBITS)
           raw = dec.decompress(kernel)
           if not dec.eof or dec.unconsumed_tail:
@@ -230,7 +233,7 @@ jobs:
               raise SystemExit("FAIL: DTB appended after gzip member does not match the selected device tree")
           if payload[8:24].split(b"\0", 1)[0] != b"loader.efi":
               raise SystemExit("FAIL: first XNUP entry is not loader.efi")
-          print(f"PASS: Android boot-v1; kernel={kernel_size}; ramdisk={ramdisk_size}; shim={len(shim)}; FD={len(fd)}; XNUP={len(payload)}; DTB={len(dtb)}")
+          print(f"PASS: Android boot-v1 page={page_size}; kernel={kernel_size}; ramdisk={ramdisk_size}; shim={len(shim)}; FD={len(fd)}; XNUP={len(payload)}; DTB={len(dtb)}")
           PY
           {
             echo "Target: Xiaomi 12 Lite taoyao / SM7325 / AArch64"
