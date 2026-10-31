@@ -75,7 +75,7 @@ jobs:
             echo "::endgroup::"
           done
           [[ "$downloaded" -eq 1 ]] || {
-            echo "::error::Could not download and verify the pinned official Xiaomi ROM from either official CDN."
+            echo "::error::Could not download and verify the pinned official Xiaomi ROM from any configured official mirror."
             exit 1
           }
           echo "ROM_SHA256=$(sha256sum "$XIAOMI_ROM_NAME" | cut -d' ' -f1)" >> "$GITHUB_ENV"
