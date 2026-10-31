@@ -2,7 +2,8 @@
   XNU loader for taoyao (SM7325), stage 0: payload handoff and diagnostics.
 
   Runs when BDS finds nothing to boot. If an "XNUP" container at 0xF0000000
-  carries "loader.efi", loads and starts it directly from memory. Otherwise,
+  carries "loader.efi" and "taoyao.dtb", publishes the DTB as an EFI
+  configuration table and starts the loader directly from memory. Otherwise,
   collects diagnostics (exception level, CPU feature registers, framebuffer,
   memory map, payload), writes them as text to the raw "logdump" partition so
   they can be read back from Android over adb, and cold-resets.
