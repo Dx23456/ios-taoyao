@@ -2,6 +2,14 @@ name: Build taoyao Silicium UEFI
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - work/taoyao-xnu-platform-preflight
+    paths:
+      - ".github/workflows/build-taoyao-uefi.yml"
+      - "devices/taoyao/**"
+      - "xnuloader/**"
+      - "mkxnuimg.py"
 
 permissions:
   contents: read
@@ -160,35 +168,37 @@ jobs:
           source "$RUNNER_TEMP/uefi-venv/bin/activate"
           cd "$MU_DIR"
 
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("build_uefi.py")
-          s = p.read_text()
-          old = 'f"FD_SIZE={fd_size}"'
-          new = old + ',\n        "CFLAGS=--target=aarch64-linux-gnu -DPAYLOAD_BASE=0xf0000000"'
-          if old not in s:
-              raise SystemExit("Could not locate BootShim make arguments in build_uefi.py")
-          p.write_text(s.replace(old, new, 1))
-          PY
-
           python3 build_uefi.py -d taoyao -r RELEASE
           test -s Mu-taoyao.img
           fd="Build/taoyaoPkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd"
           test -s "$fd"
           [[ "$(stat -c %s "$fd")" -eq 2097152 ]] || { echo "::error::UEFI FD must be exactly 2 MiB."; exit 1; }
           install -D "$fd" "$OUT_DIR/SILICIUM_UEFI.fd"
-          install -D BootShim/BootShim.bin "$OUT_DIR/BootShim.bin"
           install -D Resources/DTBs/taoyao.dtb "$OUT_DIR/taoyao.dtb"
-          install -D Mu-taoyao.img "$OUT_DIR/uefi.img"
+
+          # Build a placeholder-identity USB loader. This validates the UEFI
+          # handoff path only; it is not a native iOS/XNU boot configuration.
+          cd "$GITHUB_WORKSPACE"
+          ./xnuloader/mkidentity.sh --placeholder
+          ./xnuloader/build.sh
+          python3 xnuloader/mkpayload.py \
+            -o "$RUNNER_TEMP/taoyao/taoyao-loader.xnup" \
+            "loader.efi=$GITHUB_WORKSPACE/xnuloader/loader.efi" --usb
+          python3 mkxnuimg.py --device taoyao \
+            --payload "$RUNNER_TEMP/taoyao/taoyao-loader.xnup" \
+            --output "$OUT_DIR/uefi.img"
+          install -D "$MU_DIR/BootShim/BootShim.bin" "$OUT_DIR/BootShim.bin"
+          install -D xnuloader/loader.efi "$OUT_DIR/taoyao-loader.efi"
+          install -D "$RUNNER_TEMP/taoyao/taoyao-loader.xnup" "$OUT_DIR/taoyao-loader.xnup"
 
       - name: Audit image structure and checksums
         shell: bash
         run: |
           set -euo pipefail
-          python3 - "$OUT_DIR/uefi.img" <<'PY'
-          import pathlib, struct, sys
-          p = pathlib.Path(sys.argv[1])
-          b = p.read_bytes()
+          python3 - "$OUT_DIR/uefi.img" "$OUT_DIR/BootShim.bin" "$OUT_DIR/SILICIUM_UEFI.fd" "$OUT_DIR/taoyao-loader.xnup" "$OUT_DIR/taoyao.dtb" <<'PY'
+          import pathlib, struct, sys, zlib
+          image, shim_path, fd_path, payload_path, dtb_path = map(pathlib.Path, sys.argv[1:])
+          b = image.read_bytes()
           if len(b) < 4096 or b[:8] != b"ANDROID!":
               raise SystemExit("FAIL: output is not an Android boot image")
           header_version = struct.unpack_from("<I", b, 40)[0]
@@ -201,7 +211,26 @@ jobs:
           ramdisk_offset = 4096 + ((kernel_size + 4095) // 4096) * 4096
           if ramdisk_offset + ramdisk_size > len(b):
               raise SystemExit("FAIL: image is truncated before the complete ramdisk")
-          print(f"PASS: Android boot-v1 container; kernel={kernel_size}; ramdisk={ramdisk_size}; total={len(b)}")
+          kernel = b[4096:4096 + kernel_size]
+          dec = zlib.decompressobj(16 + zlib.MAX_WBITS)
+          raw = dec.decompress(kernel)
+          if not dec.eof or dec.unconsumed_tail:
+              raise SystemExit("FAIL: kernel gzip stream is incomplete")
+          shim, fd, payload, dtb = (p.read_bytes() for p in (shim_path, fd_path, payload_path, dtb_path))
+          if len(fd) != 0x200000:
+              raise SystemExit(f"FAIL: UEFI FD size is {len(fd)}, expected 2 MiB")
+          if payload[:4] != b"XNUP" or len(payload) < 32:
+              raise SystemExit("FAIL: loader payload is not a complete XNUP container")
+          declared = struct.unpack_from("<I", payload, 4)[0]
+          if declared + 8 != len(payload):
+              raise SystemExit("FAIL: XNUP size field does not match payload length")
+          if raw != shim + fd + payload:
+              raise SystemExit("FAIL: decompressed boot kernel is not exactly BootShim + UEFI FD + XNUP")
+          if dec.unused_data != dtb:
+              raise SystemExit("FAIL: DTB appended after gzip member does not match the selected device tree")
+          if payload[8:24].split(b"\\0", 1)[0] != b"loader.efi":
+              raise SystemExit("FAIL: first XNUP entry is not loader.efi")
+          print(f"PASS: Android boot-v1; kernel={kernel_size}; ramdisk={ramdisk_size}; shim={len(shim)}; FD={len(fd)}; XNUP={len(payload)}; DTB={len(dtb)}")
           PY
           {
             echo "Target: Xiaomi 12 Lite taoyao / SM7325 / AArch64"
@@ -209,7 +238,7 @@ jobs:
             echo "Format: Android boot image header v1; compressed BootShim + UEFI FD + appended DTB; Mu-Silicium ramdisk"
             echo "UEFI FD base: 0x9FD00000"
             echo "UEFI FD size: 0x00200000"
-            echo "BootShim payload base: 0xF0000000"
+            echo "BootShim XNUP payload base: 0xF0000000"\n            echo "XNU loader: placeholder identity; USB mode; no kernel or Apple IPSW identity"
             echo "Firmware source: official Xiaomi taoyao Global OS1.0.34.0.ULIMIXM fastboot ROM"
             echo "Firmware CDN: Singapore Xiaomi OSS mirror, then bigota, then hugeota"
             echo "Firmware ROM MD5 verified before XBL extraction"
@@ -217,7 +246,7 @@ jobs:
             echo "Native XNU bootable: NO"
             echo "Do not flash or fastboot boot this experimental image."
           } > "$OUT_DIR/BUILD-INFO.txt"
-          (cd "$OUT_DIR" && sha256sum uefi.img SILICIUM_UEFI.fd BootShim.bin taoyao.dtb BUILD-INFO.txt > SHA256SUMS)
+          (cd "$OUT_DIR" && sha256sum uefi.img SILICIUM_UEFI.fd BootShim.bin taoyao.dtb taoyao-loader.efi taoyao-loader.xnup BUILD-INFO.txt > SHA256SUMS)
 
       - uses: actions/upload-artifact@v4
         with:
