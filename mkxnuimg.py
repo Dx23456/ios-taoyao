@@ -19,7 +19,7 @@ MU = os.path.join(HERE, 'Mu-Silicium')
 DEVICES = {
     'poco-x5-pro': {'dir': 'poco-x5-pro', 'pkg': 'redwoodPkg', 'dtb': 'redwood.dtb', 'out': 'xnu-redwood.img'},
     'redwood':     {'dir': 'poco-x5-pro', 'pkg': 'redwoodPkg', 'dtb': 'redwood.dtb', 'out': 'xnu-redwood.img'},
-    'taoyao':      {'dir': 'taoyao',      'pkg': 'taoyaoPkg',  'dtb': 'taoyao.dtb',  'out': 'xnu-taoyao.img'},
+    'taoyao':      {'dir': 'taoyao',      'pkg': 'taoyaoPkg',  'dtb': 'taoyao.dtb',  'out': 'xnu-taoyao.img', 'boot_header_version': 3, 'boot_page_size': 4096},
 }
 FD_BASE, FD_SIZE = 0x9FD00000, 0x200000
 PAYLOAD_BASE, PAYLOAD_MAX = 0xF0000000, 0x04000000
@@ -80,7 +80,8 @@ kernel = args.output + '.kernel~'
 open(kernel, 'wb').write(gzip.compress(blob, 6) + dtb)
 try:
     subprocess.check_call([sys.executable, parts['mkbootimg'], '--kernel', kernel, '--ramdisk', parts['ramdisk'],
-                           '--header_version', '1', '-o', args.output])
+                           '--header_version', str(dev.get('boot_header_version', 1)),
+                           '--pagesize', str(dev.get('boot_page_size', 2048)), '-o', args.output])
 finally:
     os.unlink(kernel)
 print(f'{args.output}: {os.path.getsize(args.output)} bytes (shim {len(shim)}, uncompressed {len(blob)})')
