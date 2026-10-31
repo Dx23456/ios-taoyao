@@ -89,7 +89,19 @@ jobs:
           mkdir -p "$extract_dir"
           # Xiaomi packages may call this partition image xbl.elf or xbl.img.
           # List first, then extract exactly the single matching images entry.
-          mapfile -t xbl_entries < <(tar -tzf "$archive" | grep -E '(^|/)images/xbl\\.(elf|img)
+          mapfile -t xbl_entries < <(tar -tzf "$archive" | grep -E '(^|/)images/xbl[.](elf|img)$' || true)
+          if [[ "${#xbl_entries[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one images/xbl.elf or images/xbl.img entry; found ${#xbl_entries[@]}."
+            echo "XBL-like archive entries:"
+            tar -tzf "$archive" | grep -Ei '(^|/)images/xbl[^/]*$' || true
+            exit 1
+          fi
+          xbl_entry="${xbl_entries[0]}"
+          echo "Selected firmware entry: $xbl_entry"
+          tar -xzf "$archive" -C "$extract_dir" -- "$xbl_entry"
+          extracted_xbl="$extract_dir/$xbl_entry"
+          test -s "$extracted_xbl"
+          install -m 0644 "$extracted_xbl" "$RUNNER_TEMP/taoyao/xbl.img"
           test -s "$RUNNER_TEMP/taoyao/xbl.img"
           python3 - "$RUNNER_TEMP/taoyao/xbl.img" <<'PY'
           import pathlib, struct, sys
