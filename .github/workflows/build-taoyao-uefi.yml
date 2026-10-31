@@ -183,6 +183,7 @@ jobs:
           [[ "$(stat -c %s "$fd")" -eq 2097152 ]] || { echo "::error::UEFI FD must be exactly 2 MiB."; exit 1; }
           install -D "$fd" "$OUT_DIR/SILICIUM_UEFI.fd"
           install -D Resources/DTBs/taoyao.dtb "$OUT_DIR/taoyao.dtb"
+          install -D "$MU_DIR/Binaries/taoyao/RawFiles/uefiplat.cfg" "$OUT_DIR/uefiplat.cfg"
 
           # Build a placeholder-identity USB loader. This validates the UEFI
           # handoff path only; it is not a native iOS/XNU boot configuration.
@@ -211,12 +212,15 @@ jobs:
               raise SystemExit("FAIL: output is not an Android boot image")
           header_version = struct.unpack_from("<I", b, 40)[0]
           page_size = struct.unpack_from("<I", b, 36)[0]
-          kernel_size = struct.unpack_from("<I", b, 8)[0]
+          kernel_addr = struct.unpack_from("<I", b, 12)[0]
           ramdisk_size = struct.unpack_from("<I", b, 16)[0]
+          ramdisk_addr = struct.unpack_from("<I", b, 20)[0]
+          tags_addr = struct.unpack_from("<I", b, 32)[0]
           if header_version != 1:
               raise SystemExit(f"FAIL: expected Android boot header v1, got {header_version}")
-          if page_size not in (2048, 4096, 8192, 16384):
-              raise SystemExit(f"FAIL: unsupported Android boot page size {page_size}")
+          if (page_size, kernel_addr, ramdisk_addr, tags_addr) != (2048, 0x10008000, 0x11000000, 0x10000100):
+              raise SystemExit("FAIL: boot header load addresses/page size differ from the taoyao reference boot image")
+          kernel_size = struct.unpack_from("<I", b, 8)[0]
           if not kernel_size or not ramdisk_size:
               raise SystemExit("FAIL: kernel or ramdisk payload is empty")
           ramdisk_offset = page_size + ((kernel_size + page_size - 1) // page_size) * page_size
@@ -241,7 +245,7 @@ jobs:
               raise SystemExit("FAIL: DTB appended after gzip member does not match the selected device tree")
           if payload[8:24].split(b"\0", 1)[0] != b"loader.efi":
               raise SystemExit("FAIL: first XNUP entry is not loader.efi")
-          print(f"PASS: Android boot-v1 page={page_size}; kernel={kernel_size}; ramdisk={ramdisk_size}; shim={len(shim)}; FD={len(fd)}; XNUP={len(payload)}; DTB={len(dtb)}")
+          print(f"PASS: Android boot-v1 page={page_size}; kernel_addr={kernel_addr:#x}; ramdisk_addr={ramdisk_addr:#x}; tags_addr={tags_addr:#x}; kernel={kernel_size}; ramdisk={ramdisk_size}; shim={len(shim)}; FD={len(fd)}; XNUP={len(payload)}; DTB={len(dtb)}")
           PY
           {
             echo "Target: Xiaomi 12 Lite taoyao / SM7325 / AArch64"
@@ -259,7 +263,7 @@ jobs:
             echo "Native XNU bootable: NO"
             echo "Do not flash or fastboot boot this experimental image."
           } > "$OUT_DIR/BUILD-INFO.txt"
-          (cd "$OUT_DIR" && sha256sum uefi.img SILICIUM_UEFI.fd BootShim.bin taoyao.dtb taoyao-loader.efi taoyao-loader.xnup BUILD-INFO.txt > SHA256SUMS)
+          (cd "$OUT_DIR" && sha256sum uefi.img SILICIUM_UEFI.fd BootShim.bin taoyao.dtb taoyao-loader.efi taoyao-loader.xnup uefiplat.cfg BUILD-INFO.txt > SHA256SUMS)
 
       - uses: actions/upload-artifact@v4
         with:
