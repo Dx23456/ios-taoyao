@@ -48,6 +48,10 @@ gMemoryDescriptor[] = {
   {"APSS Ext",          0xE3400000, 0x01700000, AddMem, SYS_MEM, SYS_MEM_CAP, Conv,   WRITE_BACK_XN},
   // BootShim copies the appended "XNUP" container here (XnuLoader.h XNU_PAYLOAD_BASE)
   {"XNU Payload",       0xF0000000, 0x04000000, AddMem, SYS_MEM, SYS_MEM_CAP, Reserv, WRITE_BACK_XN},
+  // The stock taoyao DTB exposes contiguous RAM from 0xC0000000 through
+  // 0x280000000. Reserve the 4 GiB..10 GiB window for XNU: it is 32 MiB
+  // aligned, outside fixed reserved-memory nodes and above their alloc-ranges.
+  {"DDR High RAM",       0x100000000, 0x180000000, AddMem, SYS_MEM, SYS_MEM_CAP, Conv, WRITE_BACK_XN},
 
   // Other Memory Regions
   {"IMEM Base",         0x14680000, 0x0002B000, NoHob,  MMAP_IO, INITIALIZED, Conv,   NS_DEVICE},
