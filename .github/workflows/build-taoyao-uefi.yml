@@ -257,7 +257,7 @@ jobs:
           dtb_entry = payload[entry2 + 24:entry2 + 24 + size2]
           if name2 != b"taoyao.dtb" or dtb_entry != dtb:
               raise SystemExit("FAIL: second XNUP entry is not the exact taoyao DTB")
-          if len(dtb_entry) < 40 or dtb_entry[:4] != b"\\xd0\\x0d\\xfe\\xed":
+          if len(dtb_entry) < 40 or dtb_entry[:4] != bytes.fromhex("d00dfeed"):
               raise SystemExit("FAIL: XNUP taoyao.dtb entry is not an FDT blob")
           if struct.unpack_from(">I", dtb_entry, 4)[0] != len(dtb_entry):
               raise SystemExit("FAIL: XNUP DTB header size does not match its entry")
