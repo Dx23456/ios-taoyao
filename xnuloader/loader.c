@@ -66,6 +66,16 @@ struct boot_args {
 	uint64_t memSizeActual;
 };
 
+/* Keep this hand-built ABI exactly aligned with XNU 8796.121.2 boot.h. */
+_Static_assert(__builtin_offsetof(struct boot_args, virtBase) == 8, "boot_args virtBase offset");
+_Static_assert(__builtin_offsetof(struct boot_args, video) == 40, "boot_args video offset");
+_Static_assert(__builtin_offsetof(struct boot_args, machineType) == 88, "boot_args machineType offset");
+_Static_assert(__builtin_offsetof(struct boot_args, deviceTreeP) == 96, "boot_args deviceTreeP offset");
+_Static_assert(__builtin_offsetof(struct boot_args, commandLine) == 108, "boot_args commandLine offset");
+_Static_assert(__builtin_offsetof(struct boot_args, bootFlags) == 720, "boot_args bootFlags offset");
+_Static_assert(__builtin_offsetof(struct boot_args, memSizeActual) == 728, "boot_args memSizeActual offset");
+_Static_assert(sizeof(struct boot_args) == 736, "boot_args size");
+
 #define MH_MAGIC_64      0xFEEDFACFu
 #define LC_SEGMENT_64    0x19
 #define LC_UNIXTHREAD    0x5
@@ -2956,6 +2966,13 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	uint64_t map_size, map_key, desc_size;
 	uint32_t desc_ver;
 	struct payload_info pi;
+
+	/* jump_to_kernel only implements an EL1 handoff; never enter XNU from EL2. */
+	uint64_t current_el = READ_SYSREG(CurrentEL) >> 2;
+	if (current_el != 1) {
+		print("refusing XNU launch: current EL=%d; EL2-to-EL1 transition is not implemented\\n", current_el);
+		return 0;
+	}
 
 	if (!parse_payload(&pi, 1) || pi.kernel == NULL) {
 		print("no kernel in payload\n");
