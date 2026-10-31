@@ -100,7 +100,7 @@ jobs:
           import pathlib, struct, sys
           p = pathlib.Path(sys.argv[1])
           b = p.read_bytes()
-          if len(b) < 64 or b[:4] != b"\\x7fELF":
+          if len(b) < 64 or b[:4] != b"\x7fELF":
               raise SystemExit("FAIL: extracted xbl.img is not ELF")
           if b[4] != 2 or b[5] != 1 or struct.unpack_from("<H", b, 18)[0] != 183:
               raise SystemExit("FAIL: XBL is not ELF64 little-endian AArch64")
