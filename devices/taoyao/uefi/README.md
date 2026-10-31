@@ -43,6 +43,27 @@ The `.github/workflows/build-taoyao-uefi.yml` workflow now downloads the pinned 
 
 This removes the `TAOYAO_XBL_URL` and `TAOYAO_XBL_SHA256` repository-secret dependency. The workflow is pinned to the Global package; change the package filename and checksum together if targeting a different official region/build.
 
+## taoyao Memory and CPU Handoff
+
+The stock taoyao boot image's embedded DTB identifies the board as
+`taoyao based Qualcomm Technologies, Inc. Yupik IDP + PM7250B`. It describes
+eight Kryo CPU nodes using PSCI, an `arm,psci-1.0` interface with `smc`
+conduit, a GICv3 distributor at `0x17A00000` with redistributor region at
+`0x17A60000`, and an architectural timer clock of 19.2 MHz.
+
+The DTB exposes contiguous physical RAM from `0xC0000000` through
+`0x280000000` across adjacent memory tuples. The UEFI memory map now adds a
+6 GiB `EfiConventionalMemory` window at `0x100000000` (4 GiB) through
+`0x280000000` (10 GiB). This is 32 MiB aligned, avoids the fixed
+`/reserved-memory` regions, and starts above the DTB's dynamic
+`alloc-ranges` windows. The XNUP staging area remains reserved separately at
+`0xF0000000` through `0xF4000000`.
+
+CI runs `audit-memory-map.py` against the checked-in DTB, the taoyao
+`MemoryMapLib.c`, and XnuLoader's `MAX_MEM_SIZE` / `BASE_ALIGN` before
+building. This is a static consistency check, not proof that the live UEFI
+memory map exposes the same ranges or that XNU can boot.
+
 ## Build
 
 Install host packages as in Mu-Silicium's `setup_env.sh` (e.g. Arch Linux: `git base-devel lld nasm clang llvm aarch64-linux-gnu-gcc python python-pip python-virtualenv`; Ubuntu/Debian: `git build-essential lld nasm clang llvm gcc-aarch64-linux-gnu python3 python3-pip python3-venv mono-complete`).
