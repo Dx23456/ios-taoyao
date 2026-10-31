@@ -2970,7 +2970,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	/* jump_to_kernel only implements an EL1 handoff; never enter XNU from EL2. */
 	uint64_t current_el = READ_SYSREG(CurrentEL) >> 2;
 	if (current_el != 1) {
-		print("refusing XNU launch: current EL=%d; EL2-to-EL1 transition is not implemented\\n", current_el);
+		print("refusing XNU launch: current EL=%d; EL2-to-EL1 transition is not implemented\n", current_el);
 		return 0;
 	}
 
