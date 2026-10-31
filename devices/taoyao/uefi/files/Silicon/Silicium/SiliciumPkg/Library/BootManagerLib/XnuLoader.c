@@ -19,9 +19,7 @@
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
 
-#include <Protocol/BlockIo.h>
 #include <Protocol/GraphicsOutput.h>
-#include <Protocol/PartitionInfo.h>
 
 #include "XnuLoader.h"
 
@@ -49,42 +47,6 @@ Log (
 }
 
 #define READ_SYSREG(Name) ({ UINT64 _Value; __asm__ volatile ("mrs %0, " #Name : "=r" (_Value)); _Value; })
-
-STATIC
-EFI_BLOCK_IO_PROTOCOL *
-FindPartition (
-  IN CONST CHAR16 *Name)
-{
-  EFI_STATUS  Status;
-  EFI_HANDLE *Handles;
-  UINTN       Count;
-
-  Status = gBS->LocateHandleBuffer (ByProtocol, &gEfiPartitionInfoProtocolGuid, NULL, &Count, &Handles);
-  if (EFI_ERROR (Status)) {
-    return NULL;
-  }
-
-  for (UINTN i = 0; i < Count; i++) {
-    EFI_PARTITION_INFO_PROTOCOL *Info;
-    EFI_BLOCK_IO_PROTOCOL       *BlockIo;
-
-    Status = gBS->HandleProtocol (Handles[i], &gEfiPartitionInfoProtocolGuid, (VOID **)&Info);
-    if (EFI_ERROR (Status) || Info->Type != PARTITION_TYPE_GPT) {
-      continue;
-    }
-
-    if (StrnCmp (Info->Info.Gpt.PartitionName, Name, 36) != 0) {
-      continue;
-    }
-
-    Status = gBS->HandleProtocol (Handles[i], &gEfiBlockIoProtocolGuid, (VOID **)&BlockIo);
-    if (!EFI_ERROR (Status)) {
-      return BlockIo;
-    }
-  }
-
-  return NULL;
-}
 
 STATIC
 VOID
