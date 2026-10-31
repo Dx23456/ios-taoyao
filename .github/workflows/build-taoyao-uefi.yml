@@ -40,6 +40,14 @@ jobs:
           }
           test -s devices/taoyao/prebuilt/device-tree.dtb
 
+      - name: Audit taoyao DDR window for XNU
+        run: |
+          set -euo pipefail
+          python3 devices/taoyao/uefi/audit-memory-map.py \
+            --dtb devices/taoyao/prebuilt/device-tree.dtb \
+            --memory-map devices/taoyao/uefi/files/Platforms/Xiaomi/taoyaoPkg/Library/MemoryMapLib/MemoryMapLib.c \
+            --loader xnuloader/loader.c
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -243,6 +251,7 @@ jobs:
             echo "UEFI FD size: 0x00200000"
             echo "BootShim XNUP payload base: 0xF0000000"
             echo "XNU loader: placeholder identity; USB mode; no kernel or Apple IPSW identity"
+            echo "XNU RAM window: 0x100000000..0x280000000 (6 GiB; statically checked against taoyao DTB)"
             echo "Firmware source: official Xiaomi taoyao Global OS1.0.34.0.ULIMIXM fastboot ROM"
             echo "Firmware CDN: Singapore Xiaomi OSS mirror, then bigota, then hugeota"
             echo "Firmware ROM MD5 verified before XBL extraction"
