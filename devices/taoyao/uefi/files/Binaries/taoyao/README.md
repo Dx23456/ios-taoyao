@@ -21,7 +21,7 @@ Proprietary Qualcomm/Xiaomi UEFI binaries from `xbl.img` are **not** stored in g
   payload-dumper-go -p xbl,xbl_config,boot,vendor_boot payload.bin
   ```
 
-*(Never flash modified XBL partitions to the phone; HakiOS boots its UEFI image transiently in RAM via `fastboot boot`.)*
+**Safety:** Never flash modified XBL partitions. Do not run `fastboot boot` with this image yet: the Android boot-v1 container has not been proven compatible with taoyao's stock ABL launch path, and the UEFI memory map / handoff are still under audit.
 
 ---
 
