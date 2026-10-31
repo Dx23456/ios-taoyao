@@ -228,7 +228,7 @@ jobs:
               raise SystemExit("FAIL: decompressed boot kernel is not exactly BootShim + UEFI FD + XNUP")
           if dec.unused_data != dtb:
               raise SystemExit("FAIL: DTB appended after gzip member does not match the selected device tree")
-          if payload[8:24].split(b"\\0", 1)[0] != b"loader.efi":
+          if payload[8:24].split(b"\0", 1)[0] != b"loader.efi":
               raise SystemExit("FAIL: first XNUP entry is not loader.efi")
           print(f"PASS: Android boot-v1; kernel={kernel_size}; ramdisk={ramdisk_size}; shim={len(shim)}; FD={len(fd)}; XNUP={len(payload)}; DTB={len(dtb)}")
           PY
