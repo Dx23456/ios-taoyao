@@ -245,7 +245,7 @@ jobs:
           if declared + 8 != len(payload):
               raise SystemExit("FAIL: XNUP size field does not match payload length")
           expected = shim + fd + payload
-          padded = expected + b"\\0" * (-len(expected) % 16)
+          padded = expected + b"\0" * (-len(expected) % 16)
           if raw != padded:
               raise SystemExit("FAIL: decompressed boot kernel is not BootShim + UEFI FD + XNUP with expected 16-byte alignment padding")
           if dec.unused_data != dtb:
