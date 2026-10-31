@@ -8,7 +8,7 @@ A port of [Project Silicium / Mu-Silicium](https://github.com/Project-Silicium/M
 - `mu-silicium.patch`: HakiOS changes to upstream `BootShim/BootShim.S` (copies the appended `"XNUP"` container behind the 2 MB UEFI FD to `0xF0000000`) and `Silicon/Silicium/SiliciumPkg/Library/BootManagerLib` (invokes `XnuLoaderMain()` instead of launching a GUI boot menu).
 - `files/`:
   - `Platforms/Xiaomi/taoyaoPkg/`: EDK2 platform package (`DeviceBuild.py`, `taoyao.dec`, `taoyao.dsc`, `taoyao.fdf`, `Include/{APRIORI,DXE,RAW}.inc`, `ConfigurationMapLib`, and `taoyao`-reconciled `MemoryMapLib`).
-  - `Resources/Configs/taoyao.toml`: image builder config (`FD_BASE = 0x9FD00000`, `FD_SIZE = 0x200000`, gzipped kernel + appended DTB, Android boot header v1).
+  - `Resources/Configs/taoyao.toml`: image builder config (`FD_BASE = 0x9FD00000`, `FD_SIZE = 0x200000`, gzipped kernel + appended DTB, Android boot header v3 / 4 KiB pages).
   - `Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/XnuLoader.[ch]`: stage-0 `XNUP` loader and `logdump` diagnostics.
   - `Binaries/taoyao/README.md`: instructions for extracting `taoyao`'s proprietary XBL DXE drivers and `RawFiles` from official Xiaomi firmware using `UEFIReader` (never commit vendor binaries).
 
@@ -37,9 +37,11 @@ The `.github/workflows/build-taoyao-uefi.yml` workflow now downloads the pinned 
 - The extracted XBL is structurally checked as ELF64 little-endian AArch64 and must contain the `taoyao` identifier.
 - The extracted XBL receives a SHA-256 audit value in the workflow log.
 - The workflow builds the standalone ARM64 UEFI XNU loader with a **placeholder identity**, packs it into an `XNUP` container, and embeds that container after the 2 MiB UEFI FD in the compressed BootShim kernel.
-- The final Android boot-v1 container is structurally audited by decompressing the kernel and verifying the exact `BootShim + UEFI FD + XNUP` byte sequence and appended taoyao DTB.
+- The final Android boot-v3 container is structurally audited by decompressing the kernel and verifying the exact `BootShim + UEFI FD + XNUP` byte sequence and appended taoyao DTB.
 - This is a loader-handoff build only. It does not contain a taoyao-native XNU kernel or a valid Apple device identity, and it is not yet approved for `fastboot boot`.
 - The Singapore mirror URL is the published firmware link for this exact package; the workflow falls back to Xiaomi's bigota/hugeota hosts if that mirror is unavailable.
+
+The workflow also extracts the stock `images/boot.img` from the same verified ROM and checks its boot-header version. The taoyao image builder is configured for header v3 with 4 KiB pages, matching the device-tree build configuration. This is a format match, not proof that the custom image can execute on ABL.
 
 This removes the `TAOYAO_XBL_URL` and `TAOYAO_XBL_SHA256` repository-secret dependency. The workflow is pinned to the Global package; change the package filename and checksum together if targeting a different official region/build.
 
