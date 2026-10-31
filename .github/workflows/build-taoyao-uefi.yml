@@ -1,5 +1,9 @@
 name: Build taoyao Silicium UEFI
 
+concurrency:
+  group: taoyao-uefi-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   push:
