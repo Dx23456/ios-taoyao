@@ -32,7 +32,8 @@ The `.github/workflows/build-taoyao-uefi.yml` workflow now downloads the pinned 
 - Fallback 2: `https://hugeota.d.miui.com`
 - Firmware: `OS1.0.34.0.ULIMIXM` (`taoyao`, Global)
 - The complete ROM archive is checked against its published MD5 before extraction.
-- Only `images/xbl.img` is extracted; the full ROM is not unpacked or retained.
+- The workflow locates exactly one `images/xbl.elf` or `images/xbl.img` entry and extracts only that file; the full ROM is not unpacked or retained.
+- The extracted partition image is normalized to `xbl.img` for UEFIReader.
 - The extracted XBL is structurally checked as ELF64 little-endian AArch64 and must contain the `taoyao` identifier.
 - The extracted XBL receives a SHA-256 audit value in the workflow log.
 - The Singapore mirror URL is the published firmware link for this exact package; the workflow falls back to Xiaomi's bigota/hugeota hosts if that mirror is unavailable.
