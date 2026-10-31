@@ -3483,13 +3483,15 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	}
 
 	dt_begin(&w, "cpus");
+	dt_prop_u32(&w, "#address-cells", 2);
+	dt_prop_u32(&w, "#size-cells", 0);
 	for (int i = 0; i < cpu_count; i++) {
 		char name[5] = { 'c', 'p', 'u', (char)('0' + i), 0 };
 
 		dt_begin(&w, name);
 		dt_prop_str(&w, "device_type", "cpu");
 		dt_prop_str(&w, "state", i == 0 ? "running" : "waiting");
-		dt_prop_u32(&w, "reg", (uint32_t)cpu_mpidr[i]);
+		dt_prop_u64(&w, "reg", cpu_mpidr[i]);
 		dt_prop_u32(&w, "cpu-id", (uint32_t)i);
 		dt_prop_u64(&w, "timebase-frequency", cntfrq);
 		dt_prop_u64(&w, "fixed-frequency", cntfrq);
@@ -4232,7 +4234,10 @@ efi_main(efi_handle image, efi_system_table *st)
 		    SCREEN.base);
 		reboot();
 	}
-	ramfb_phone_screen();
+	if (!is_taoyao) {
+		/* QEMU-only fw_cfg device: never touch 0x09020000 on the handset. */
+		ramfb_phone_screen();
+	}
 	print("display %d x %d at %x\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
 	if (is_taoyao) {
 		print("platform taoyao SM7325 (single-core bring-up profile; native boot not validated)\n");
