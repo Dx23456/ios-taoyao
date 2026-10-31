@@ -52,7 +52,14 @@ conduit, a GICv3 distributor at `0x17A00000` with redistributor region at
 `0x17A60000`, and an architectural timer clock of 19.2 MHz.
 
 The DTB exposes contiguous physical RAM from `0xC0000000` through
-`0x280000000` across adjacent memory tuples. The UEFI memory map now adds a
+`0x280000000` across adjacent memory tuples. The XNUP container carries both `loader.efi` and the same `taoyao.dtb` blob.
+The DXE-side `XnuLoader` validates the FDT header and installs that blob under
+UEFI's standard device-tree configuration-table GUID before `StartImage`, so
+`loader.efi` can positively identify Yupik/taoyao rather than guessing from the
+framebuffer. The image audit verifies the embedded DTB matches the appended
+boot-image DTB byte-for-byte.
+
+The UEFI memory map now adds a
 6 GiB `EfiConventionalMemory` window at `0x100000000` (4 GiB) through
 `0x280000000` (10 GiB). This is 32 MiB aligned, avoids the fixed
 `/reserved-memory` regions, and starts above the DTB's dynamic
