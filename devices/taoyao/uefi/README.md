@@ -36,6 +36,9 @@ The `.github/workflows/build-taoyao-uefi.yml` workflow now downloads the pinned 
 - The extracted partition image is normalized to `xbl.img` for UEFIReader.
 - The extracted XBL is structurally checked as ELF64 little-endian AArch64 and must contain the `taoyao` identifier.
 - The extracted XBL receives a SHA-256 audit value in the workflow log.
+- The workflow builds the standalone ARM64 UEFI XNU loader with a **placeholder identity**, packs it into an `XNUP` container, and embeds that container after the 2 MiB UEFI FD in the compressed BootShim kernel.
+- The final Android boot-v1 container is structurally audited by decompressing the kernel and verifying the exact `BootShim + UEFI FD + XNUP` byte sequence and appended taoyao DTB.
+- This is a loader-handoff build only. It does not contain a taoyao-native XNU kernel or a valid Apple device identity, and it is not yet approved for `fastboot boot`.
 - The Singapore mirror URL is the published firmware link for this exact package; the workflow falls back to Xiaomi's bigota/hugeota hosts if that mirror is unavailable.
 
 This removes the `TAOYAO_XBL_URL` and `TAOYAO_XBL_SHA256` repository-secret dependency. The workflow is pinned to the Global package; change the package filename and checksum together if targeting a different official region/build.
