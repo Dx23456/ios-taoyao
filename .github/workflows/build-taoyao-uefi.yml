@@ -173,7 +173,7 @@ jobs:
           "$RUNNER_TEMP/uefi-venv/bin/pip" install --upgrade pip
           "$RUNNER_TEMP/uefi-venv/bin/pip" install -r "$MU_DIR/pip-requirements.txt"
 
-      - name: Build UEFI and package Android boot-v1 image
+      - name: Build UEFI and package Android boot-v3 image
         shell: bash
         run: |
           set -euo pipefail
@@ -216,18 +216,15 @@ jobs:
           if len(b) < 2048 or b[:8] != b"ANDROID!":
               raise SystemExit("FAIL: output is not an Android boot image")
           header_version = struct.unpack_from("<I", b, 40)[0]
-          page_size = struct.unpack_from("<I", b, 36)[0]
-          kernel_addr = struct.unpack_from("<I", b, 12)[0]
-          ramdisk_size = struct.unpack_from("<I", b, 16)[0]
-          ramdisk_addr = struct.unpack_from("<I", b, 20)[0]
-          tags_addr = struct.unpack_from("<I", b, 32)[0]
-          if header_version != 1:
-              raise SystemExit(f"FAIL: expected Android boot header v1, got {header_version}")
-          if (page_size, kernel_addr, ramdisk_addr, tags_addr) != (2048, 0x10008000, 0x11000000, 0x10000100):
-              raise SystemExit("FAIL: boot header load addresses/page size differ from the taoyao reference boot image")
-          kernel_size = struct.unpack_from("<I", b, 8)[0]
-          if not kernel_size or not ramdisk_size:
-              raise SystemExit("FAIL: kernel or ramdisk payload is empty")
+          header_size = struct.unpack_from("<I", b, 20)[0]
+          kernel_size, ramdisk_size = struct.unpack_from("<II", b, 8)
+          # Android boot header v3 fixes the page size at 4096 and removes
+          # legacy physical load-address fields. Match taoyao's stock build config.
+          page_size = 4096
+          if header_version != 3 or header_size != 1580:
+              raise SystemExit(f"FAIL: expected Android boot header v3/size 1580, got v{header_version}/size {header_size}")
+          if not kernel_size:
+              raise SystemExit("FAIL: kernel payload is empty")
           ramdisk_offset = page_size + ((kernel_size + page_size - 1) // page_size) * page_size
           if ramdisk_offset + ramdisk_size > len(b):
               raise SystemExit("FAIL: image is truncated before the complete ramdisk")
@@ -267,12 +264,12 @@ jobs:
               raise SystemExit("FAIL: XNUP taoyao.dtb entry is not an FDT blob")
           if struct.unpack_from(">I", dtb_entry, 4)[0] != len(dtb_entry):
               raise SystemExit("FAIL: XNUP DTB header size does not match its entry")
-          print(f"PASS: Android boot-v1 page={page_size}; kernel_addr={kernel_addr:#x}; ramdisk_addr={ramdisk_addr:#x}; tags_addr={tags_addr:#x}; kernel={kernel_size}; ramdisk={ramdisk_size}; shim={len(shim)}; FD={len(fd)}; XNUP={len(payload)}; DTB={len(dtb)}")
+          print(f"PASS: Android boot-v3 page={page_size}; header_size={header_size}; kernel={kernel_size}; ramdisk={ramdisk_size}; shim={len(shim)}; FD={len(fd)}; XNUP={len(payload)}; DTB={len(dtb)}")
           PY
           {
             echo "Target: Xiaomi 12 Lite taoyao / SM7325 / AArch64"
             echo "Artifact: uefi.img"
-            echo "Format: Android boot-v1; gzip(BootShim + 2 MiB UEFI FD + XNUP{loader.efi,taoyao.dtb,usb}) + taoyao DTB; Mu-Silicium ramdisk"
+            echo "Format: Android boot-v3 / 4 KiB pages; gzip(BootShim + 2 MiB UEFI FD + XNUP{loader.efi,taoyao.dtb,usb}) + taoyao DTB; Mu-Silicium placeholder ramdisk"
             echo "UEFI FD base: 0x9FD00000"
             echo "UEFI FD size: 0x00200000"
             echo "BootShim XNUP payload base: 0xF0000000"
