@@ -71,6 +71,37 @@ jobs:
           test -f "$MU_DIR/Platforms/Xiaomi/taoyaoPkg/taoyao.dsc"
           test -f "$MU_DIR/Resources/DTBs/taoyao.dtb"
 
+      - name: Configure safe UEFI-only first boot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$MU_DIR" <<'PY'
+          from pathlib import Path
+          import sys
+          root = Path(sys.argv[1])
+          shim = root / "BootShim/BootShim.S"
+          text = shim.read_text()
+          start = text.find("#ifdef PAYLOAD_BASE")
+          if start < 0:
+              raise SystemExit("Expected experimental PAYLOAD_BASE block was not found")
+          end = text.find("#endif", start)
+          if end < 0:
+              raise SystemExit("PAYLOAD_BASE block has no #endif")
+          shim.write_text(text[:start] + text[end + len("#endif"):])
+          bm = root / "Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManager.c"
+          text = bm.read_text().replace('#include "XnuLoader.h"\n', "")
+          call = '  // Nothing else to boot: hand over to the XNU loader (does not return)\n  XnuLoaderMain ();\n\n'
+          if call not in text:
+              raise SystemExit("Expected XnuLoader handoff was not found in BootManager.c")
+          bm.write_text(text.replace(call, "", 1))
+          inf = root / "Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManagerLib.inf"
+          text = inf.read_text()
+          if "  XnuLoader.c\n" not in text:
+              raise SystemExit("Expected XnuLoader.c source entry was not found")
+          inf.write_text(text.replace("  XnuLoader.c\n", "", 1))
+          PY
+          grep -q 'append_dtb         = false' devices/taoyao/uefi/files/Resources/Configs/taoyao.toml
+
       - name: Extract proprietary drivers from device XBL
         shell: bash
         run: |
@@ -102,18 +133,6 @@ jobs:
           source "$RUNNER_TEMP/uefi-venv/bin/activate"
           cd "$MU_DIR"
 
-          # Add the taoyao XNUP destination to Mu-Silicium's BootShim make call.
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("build_uefi.py")
-          s = p.read_text()
-          old = 'f"FD_SIZE={fd_size}"'
-          new = old + ',\n        "CFLAGS=--target=aarch64-linux-gnu -DPAYLOAD_BASE=0xf0000000"'
-          if old not in s:
-              raise SystemExit("Could not locate BootShim make arguments in build_uefi.py")
-          p.write_text(s.replace(old, new, 1))
-          PY
-
           python3 build_uefi.py -d taoyao -r RELEASE
           test -s Mu-taoyao.img
           fd="Build/taoyaoPkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd"
@@ -128,10 +147,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - "$OUT_DIR/uefi.img" <<'PY'
-          import pathlib, struct, sys
-          p = pathlib.Path(sys.argv[1])
-          b = p.read_bytes()
+          python3 - "$OUT_DIR/uefi.img" "$OUT_DIR/BootShim.bin" "$OUT_DIR/SILICIUM_UEFI.fd" <<'PY'
+          import gzip, pathlib, struct, sys
+          image, shim_path, fd_path = map(pathlib.Path, sys.argv[1:])
+          b = image.read_bytes()
+          shim = shim_path.read_bytes()
+          fd = fd_path.read_bytes()
           if len(b) < 4096 or b[:8] != b"ANDROID!":
               raise SystemExit("FAIL: output is not an Android boot image")
           header_version = struct.unpack_from("<I", b, 40)[0]
@@ -141,22 +162,34 @@ jobs:
               raise SystemExit(f"FAIL: expected Android boot header v1, got {header_version}")
           if not kernel_size or not ramdisk_size:
               raise SystemExit("FAIL: kernel or ramdisk payload is empty")
+          kernel = b[4096:4096 + kernel_size]
+          if len(kernel) != kernel_size or not kernel.startswith(bytes([0x1f, 0x8b])):
+              raise SystemExit("FAIL: Android kernel payload is not a complete gzip stream")
+          unpacked = gzip.decompress(kernel)
+          if unpacked[:len(shim)] != shim:
+              raise SystemExit("FAIL: decompressed kernel does not begin with the exact BootShim binary")
+          if unpacked[len(shim):len(shim) + len(fd)] != fd:
+              raise SystemExit("FAIL: UEFI FD is not immediately after BootShim")
+          if len(fd) != 0x200000:
+              raise SystemExit(f"FAIL: expected 2 MiB UEFI FD, got {len(fd)}")
+          if unpacked[56:60] != b"ARM" + bytes([0x64]):
+              raise SystemExit("FAIL: BootShim ARM64 Image header magic is missing")
           ramdisk_offset = 4096 + ((kernel_size + 4095) // 4096) * 4096
           if ramdisk_offset + ramdisk_size > len(b):
               raise SystemExit("FAIL: image is truncated before the complete ramdisk")
-          print(f"PASS: Android boot-v1 container; kernel={kernel_size}; ramdisk={ramdisk_size}; total={len(b)}")
+          print(f"PASS: Android boot-v1; gzip kernel contains BootShim ({len(shim)} bytes) + 2 MiB UEFI FD; ramdisk={ramdisk_size}")
           PY
           {
             echo "Target: Xiaomi 12 Lite taoyao / SM7325 / AArch64"
             echo "Artifact: uefi.img"
-            echo "Format: Android boot image header v1; compressed BootShim + UEFI FD + appended DTB; Mu-Silicium ramdisk"
+            echo "Format: Android boot image header v1; gzip(BootShim + 2 MiB UEFI FD); Mu-Silicium ramdisk; no appended DTB"
             echo "UEFI FD base: 0x9FD00000"
             echo "UEFI FD size: 0x00200000"
-            echo "BootShim payload base: 0xF0000000"
+            echo "BootShim payload base: not used (UEFI-only build)"
             echo "Official Xiaomi Global ROM MD5 verified; extracted XBL SHA-256 recorded; proprietary XBL source not packaged"
-            echo "Hardware UEFI boot tested: NO"
+            echo "XNU handoff: DISABLED (no XNUP payload supplied)\nHardware UEFI boot tested: NO"
             echo "Native XNU bootable: NO"
-            echo "Do not flash or fastboot boot this experimental image."
+            echo "Fastboot RAM boot: NOT YET VERIFIED on physical taoyao; do not flash to a partition."
           } > "$OUT_DIR/BUILD-INFO.txt"
           (cd "$OUT_DIR" && sha256sum uefi.img SILICIUM_UEFI.fd BootShim.bin taoyao.dtb BUILD-INFO.txt > SHA256SUMS)
 
