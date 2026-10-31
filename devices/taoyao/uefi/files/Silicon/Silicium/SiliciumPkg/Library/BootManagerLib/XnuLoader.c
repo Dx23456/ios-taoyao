@@ -198,6 +198,43 @@ FlushLog ()
 // the real XNU loader: start it straight from memory, so the loader can be
 // iterated on without rebuilding this firmware.
 //
+STATIC CONST EFI_GUID mEfiDtbTableGuid = {
+  0xb1b621d5, 0xf19c, 0x41a5, { 0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0 }
+};
+
+STATIC
+UINT32
+ReadFdtBe32 (
+  IN CONST UINT8 *Data
+  )
+{
+  return ((UINT32)Data[0] << 24) | ((UINT32)Data[1] << 16) |
+         ((UINT32)Data[2] << 8) | Data[3];
+}
+
+STATIC
+BOOLEAN
+IsValidFdt (
+  IN CONST VOID *Buffer,
+  IN UINTN       BufferSize
+  )
+{
+  CONST UINT8 *Data = (CONST UINT8 *)Buffer;
+  UINT32      TotalSize;
+
+  if (Data == NULL || BufferSize < 40 || ReadFdtBe32 (Data) != 0xD00DFEED) {
+    return FALSE;
+  }
+
+  TotalSize = ReadFdtBe32 (Data + 4);
+  return (BOOLEAN)(TotalSize >= 40 && TotalSize <= BufferSize && TotalSize <= 0x01000000);
+}
+
+//
+// The payload carries both the loader EFI image and the taoyao DTB. Publish
+// the DTB through the standard EFI configuration-table GUID before starting
+// loader.efi; the loader refuses to select the taoyao profile without it.
+//
 STATIC
 VOID
 StartPayloadLoader ()
@@ -205,9 +242,11 @@ StartPayloadLoader ()
   XNU_PAYLOAD_HEADER *Header = (XNU_PAYLOAD_HEADER *)XNU_PAYLOAD_BASE;
   UINT8              *Cursor;
   UINT8              *End;
+  VOID               *LoaderBuffer = NULL;
+  UINTN               LoaderSize = 0;
+  VOID               *DtbBuffer = NULL;
+  UINTN               DtbSize = 0;
 
-  // Header->Size counts bytes following the header. Keep the complete
-  // container inside the fixed UEFI reservation before parsing any entry.
   if (Header->Magic != XNU_PAYLOAD_MAGIC ||
       Header->Size > XNU_PAYLOAD_MAX_SIZE - sizeof (*Header)) {
     Log ("[payload] invalid magic or container size\n");
@@ -223,7 +262,7 @@ StartPayloadLoader ()
     UINTN              AlignedSize;
 
     if (Entry->Name[0] == 0) {
-      return;
+      break;
     }
 
     Cursor += sizeof (*Entry);
@@ -240,38 +279,55 @@ StartPayloadLoader ()
     }
 
     if (AsciiStrnCmp (Entry->Name, "loader.efi", sizeof (Entry->Name)) == 0) {
-      EFI_HANDLE Handle;
-      EFI_STATUS Status;
-
-      if (Entry->Size == 0) {
-        Log ("[payload] loader.efi has zero length\n");
+      if (LoaderBuffer != NULL || Entry->Size == 0) {
+        Log ("[payload] duplicate or empty loader.efi entry\n");
         return;
       }
-
-      Status = gBS->LoadImage (FALSE, gImageHandle, NULL, Cursor, Entry->Size, &Handle);
-      if (EFI_ERROR (Status)) {
-        Log ("[payload] LoadImage failed: %r\n", Status);
+      LoaderBuffer = Cursor;
+      LoaderSize = Entry->Size;
+    } else if (AsciiStrnCmp (Entry->Name, "taoyao.dtb", sizeof (Entry->Name)) == 0) {
+      if (DtbBuffer != NULL || !IsValidFdt (Cursor, Entry->Size)) {
+        Log ("[payload] duplicate or invalid taoyao.dtb entry\n");
         return;
       }
-
-      Status = gBS->StartImage (Handle, NULL, NULL);
-      Log ("[payload] StartImage returned: %r\n", Status);
-      return;
+      DtbBuffer = Cursor;
+      DtbSize = Entry->Size;
     }
 
     Cursor += AlignedSize;
   }
 
-  Log ("[payload] no complete loader.efi entry found\n");
+  if (LoaderBuffer == NULL || LoaderSize == 0) {
+    Log ("[payload] no complete loader.efi entry found\n");
+    return;
+  }
+  if (DtbBuffer == NULL || DtbSize == 0) {
+    Log ("[payload] taoyao.dtb missing; refusing to launch without board identity\n");
+    return;
+  }
+
+  EFI_STATUS Status = gBS->InstallConfigurationTable (&mEfiDtbTableGuid, DtbBuffer);
+  if (EFI_ERROR (Status)) {
+    Log ("[payload] InstallConfigurationTable(DTB) failed: %r\n", Status);
+    return;
+  }
+  Log ("[payload] installed taoyao DTB configuration table (%u bytes)\n", DtbSize);
+
+  EFI_HANDLE Handle;
+  Status = gBS->LoadImage (FALSE, gImageHandle, NULL, LoaderBuffer, LoaderSize, &Handle);
+  if (EFI_ERROR (Status)) {
+    Log ("[payload] LoadImage failed: %r\n", Status);
+    return;
+  }
+
+  Status = gBS->StartImage (Handle, NULL, NULL);
+  Log ("[payload] StartImage returned: %r\n", Status);
 }
 
 VOID
 XnuLoaderMain ()
 {
   EFI_TIME Time;
-
-  // Normally does not return
-  StartPayloadLoader ();
 
   mLog = AllocateZeroPool (LOG_SIZE);
   if (mLog != NULL) {
@@ -280,6 +336,13 @@ XnuLoaderMain ()
     if (!EFI_ERROR (gRT->GetTime (&Time, NULL))) {
       Log ("time=%04d-%02d-%02d %02d:%02d:%02d\n", Time.Year, Time.Month, Time.Day, Time.Hour, Time.Minute, Time.Second);
     }
+  }
+
+  // Normally does not return; initialize the log first so handoff failures
+  // are recorded in the fallback diagnostic buffer.
+  StartPayloadLoader ();
+
+  if (mLog != NULL) {
 
     FlushLog ();
     LogCpu ();
