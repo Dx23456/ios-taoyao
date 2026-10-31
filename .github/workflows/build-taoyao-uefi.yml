@@ -192,7 +192,7 @@ jobs:
           ./xnuloader/build.sh
           python3 xnuloader/mkpayload.py \
             -o "$RUNNER_TEMP/taoyao/taoyao-loader.xnup" \
-            "loader.efi=$GITHUB_WORKSPACE/xnuloader/loader.efi" \\
+            "loader.efi=$GITHUB_WORKSPACE/xnuloader/loader.efi" \
             "taoyao.dtb=$MU_DIR/Resources/DTBs/taoyao.dtb" --usb
           python3 mkxnuimg.py --device taoyao \
             --payload "$RUNNER_TEMP/taoyao/taoyao-loader.xnup" \
