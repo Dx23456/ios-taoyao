@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 240
     env:
       # Official Xiaomi 12 Lite (taoyao) Global fastboot ROM.
-      # bigota is attempted first; hugeota is the official fallback.
+      # Singapore Xiaomi OSS mirror is primary; bigota and hugeota are fallbacks.
       XIAOMI_ROM_NAME: taoyao_global_images_OS1.0.34.0.ULIMIXM_20260525.0000.00_14.0_global_e8602e568a.tgz
       XIAOMI_ROM_MD5: e8602e568a7b82cabc34b7f3aeb43b72
       XIAOMI_ROM_PATH: /OS1.0.34.0.ULIMIXM/taoyao_global_images_OS1.0.34.0.ULIMIXM_20260525.0000.00_14.0_global_e8602e568a.tgz
