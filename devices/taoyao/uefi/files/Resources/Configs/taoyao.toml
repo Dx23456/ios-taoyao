@@ -16,7 +16,7 @@ size = 0x200000
 #
 [boot_image_kernel]
 kernel_compression = "gzip"
-append_dtb         = true
+append_dtb         = false
 
 #
 # Android Boot Image Configs
